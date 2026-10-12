@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Установка TvTray</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; height: 100vh; }
+  h1 { font-size: 18px; margin: 0; }
+  p { margin: 0; color: var(--muted); }
+  .path { display: flex; gap: 8px; }
+  .path input { flex: 1; }
+  .buttons { margin-top: auto; display: flex; gap: 8px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+  <h1>Установить TvTray?</h1>
+  <p>Программа будет скопирована в выбранную папку, настройки будут храниться там же в <code>TvTray.ini</code>. Для Program Files понадобятся права администратора (один раз).</p>
+  <div class="path">
+    <input type="text" id="dir" spellcheck="false">
+    <button id="browse">Обзор…</button>
+  </div>
+  <label class="check"><input type="checkbox" id="autostart" checked> Запускать вместе с Windows</label>
+  <div class="error" id="err"></div>
+  <div class="buttons">
+    <button id="portable" title="Создать TvTray.ini рядом с этим файлом и работать отсюда">Без установки</button>
+    <button id="cancel">Отмена</button>
+    <button class="primary" id="install">Установить</button>
+  </div>
+<script type="module">
+import { installer, $ } from "/common.js";
+
+const d = await installer("Defaults");
+$("#dir").value = d.dir;
+$("#portable").title += `\n${d.current}`;
+
+const busy = on => document.querySelectorAll("button").forEach(b => b.disabled = on);
+const run = async fn => {
+  $("#err").textContent = "";
+  busy(true);
+  try { await fn(); } catch (e) { $("#err").textContent = e?.message ?? String(e); busy(false); }
+};
+
+$("#browse").onclick = async () => {
+  const p = await installer("Browse", $("#dir").value).catch(() => "");
+  if (p) $("#dir").value = p.replace(/[\\/]TvTray$/i, "") + "\\TvTray";
+};
+$("#install").onclick = () => run(() => installer("Install", $("#dir").value, $("#autostart").checked));
+$("#portable").onclick = () => run(() => installer("Portable", $("#autostart").checked));
+$("#cancel").onclick = () => installer("Quit");
+</script>
+</body>
+</html>

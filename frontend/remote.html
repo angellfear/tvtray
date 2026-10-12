@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Пульт</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { padding: 14px; }
+  .remote { display: flex; flex-direction: column; gap: 12px; }
+  .grid { display: grid; gap: 6px; }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .remote button { padding: 8px 4px; font-size: 13px; }
+  .dpad { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 48px); gap: 6px; justify-content: center; }
+  .dpad button { font-size: 18px; padding: 0; }
+  .dpad .ok { border-radius: 50%; font-size: 14px; font-weight: 600; }
+  .rocker { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .rocker > div { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+  .rocker span { text-align: center; font-size: 11px; color: var(--muted); }
+  .top { display: flex; justify-content: space-between; align-items: center; }
+  .power { color: var(--danger); font-size: 16px; }
+  kbd { font: 11px "Segoe UI"; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="remote">
+  <div class="top">
+    <span class="row"><span class="dot" id="dot"></span><b id="name">ТВ</b></span>
+    <button class="icon power" data-power title="Питание">⏻</button>
+  </div>
+
+  <div class="grid g4">
+    <button data-key="KEY_SOURCE">Source</button>
+    <button data-key="KEY_HOME">Home</button>
+    <button data-key="KEY_MENU">Menu</button>
+    <button data-key="KEY_INFO">Info</button>
+  </div>
+
+  <div class="dpad">
+    <span></span><button data-key="KEY_UP">▲</button><span></span>
+    <button data-key="KEY_LEFT">◀</button><button class="ok" data-key="KEY_ENTER">OK</button><button data-key="KEY_RIGHT">▶</button>
+    <span></span><button data-key="KEY_DOWN">▼</button><span></span>
+  </div>
+
+  <div class="grid g3">
+    <button data-key="KEY_RETURN">↩ Назад</button>
+    <button data-key="KEY_TOOLS">Tools</button>
+    <button data-key="KEY_EXIT">Exit</button>
+  </div>
+
+  <div class="rocker">
+    <div><button data-key="KEY_VOLUP">＋</button><span>Громкость</span><button data-key="KEY_VOLDOWN">－</button></div>
+    <div><button data-key="KEY_CHUP">▲</button><span>Канал</span><button data-key="KEY_CHDOWN">▼</button></div>
+  </div>
+
+  <div class="grid g4">
+    <button data-key="KEY_MUTE">🔇</button>
+    <button data-key="KEY_REWIND">⏪</button>
+    <button data-key="KEY_PLAY">▶</button>
+    <button data-key="KEY_PAUSE">⏸</button>
+    <button data-key="KEY_STOP">⏹</button>
+    <button data-key="KEY_FF">⏩</button>
+    <button data-key="KEY_PRECH">PRE-CH</button>
+    <button data-key="KEY_GUIDE">Guide</button>
+  </div>
+
+  <div class="grid g3">
+    <button data-key="KEY_1">1</button><button data-key="KEY_2">2</button><button data-key="KEY_3">3</button>
+    <button data-key="KEY_4">4</button><button data-key="KEY_5">5</button><button data-key="KEY_6">6</button>
+    <button data-key="KEY_7">7</button><button data-key="KEY_8">8</button><button data-key="KEY_9">9</button>
+    <button data-key="KEY_HDMI">HDMI</button><button data-key="KEY_0">0</button><button data-key="KEY_CH_LIST">CH List</button>
+  </div>
+
+  <div class="small muted">Клавиатура: стрелки, Enter = OK, Backspace = Назад, Esc = Exit, +/− громкость, M = mute, H = Home</div>
+</div>
+<script type="module">
+import { tv, Events, $, safe, powerIcon } from "/common.js";
+$("[data-power]").innerHTML = powerIcon;
+
+const mac = new URLSearchParams(location.search).get("mac");
+const send = key => safe(() => tv("Key", mac, key));
+
+document.querySelectorAll("[data-key]").forEach(b => b.addEventListener("click", () => send(b.dataset.key)));
+$("[data-power]").onclick = () => safe(() => tv("Power", mac));
+
+const keymap = {
+  ArrowUp: "KEY_UP", ArrowDown: "KEY_DOWN", ArrowLeft: "KEY_LEFT", ArrowRight: "KEY_RIGHT",
+  Enter: "KEY_ENTER", Backspace: "KEY_RETURN", Escape: "KEY_EXIT",
+  "+": "KEY_VOLUP", "=": "KEY_VOLUP", "-": "KEY_VOLDOWN", m: "KEY_MUTE", h: "KEY_HOME",
+  PageUp: "KEY_CHUP", PageDown: "KEY_CHDOWN",
+};
+document.addEventListener("keydown", e => {
+  const k = keymap[e.key] ?? (/^[0-9]$/.test(e.key) ? "KEY_" + e.key : null);
+  if (k) { e.preventDefault(); send(k); }
+});
+
+function show(list) {
+  const t = list.find(x => x.mac === mac);
+  if (!t) return;
+  $("#name").textContent = t.name || t.model;
+  $("#dot").className = "dot" + (t.online ? " on" : "");
+}
+Events.On("state", ev => show(ev.data));
+tv("Settings").then(s => show(s.config.tvs.map(t => ({ ...t, online: s.online[t.mac] }))));
+</script>
+</body>
+</html>

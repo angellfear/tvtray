@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>TvTray</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  html, body { background: var(--bg); overflow: hidden; }
+  body { border: 1px solid var(--border); }
+  #list { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+  .tv { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+  .tv header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .tv header .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctl { display: grid; grid-template-columns: 22px 1fr 34px; align-items: center; gap: 8px; height: 30px; }
+  .ctl .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  .ctl .ico { font-size: 15px; text-align: center; cursor: default; }
+  .ctl .ico.btn { cursor: pointer; }
+  .tv footer { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+  .tv.offline .ctl { opacity: .4; pointer-events: none; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .hint a { color: var(--accent); cursor: pointer; }
+  .bar { display: flex; justify-content: space-between; align-items: center; padding: 0 12px 8px; }
+  .empty { padding: 16px; text-align: center; color: var(--muted); }
+  .busy { color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="list"></div>
+<div class="bar">
+  <span class="small muted">TvTray</span>
+  <button class="icon" id="settings" title="Настройки">⚙</button>
+</div>
+<script type="module">
+import { tv, Events, $, el, safe, throttle, powerIcon } from "/common.js";
+
+const list = $("#list");
+let dragging = false; // don't re-render while a slider is held
+const volCache = {}; // last known volume per TV, shown until the TV answers
+
+function group(t) {
+  const online = t.online;
+  const power = el("button", { class: "icon", title: online ? "Выключить" : "Включить",
+    onclick: () => safe(async () => { power.disabled = true; await tv("Power", t.mac); }) });
+  power.innerHTML = powerIcon;
+
+  // Volume
+  const cached = t.volumeMode === "upnp" ? volCache[t.mac] : t.volume;
+  const volVal = el("span", { class: "val" }, cached >= 0 ? String(cached) : "…");
+  const vol = el("input", { type: "range", min: 0, max: 100, value: Math.max(0, cached ?? 0) });
+  const sendVol = throttle(v => safe(() => tv("SetVolume", t.mac, v)), 150);
+  if (t.volumeMode === "upnp") {
+    vol.addEventListener("input", () => { volVal.textContent = vol.value; volCache[t.mac] = +vol.value; sendVol(+vol.value); });
+  } else {
+    // keys mode: each step is a key press, so only send the final value
+    vol.addEventListener("input", () => { volVal.textContent = vol.value; });
+    vol.addEventListener("change", () => safe(() => tv("SetVolume", t.mac, +vol.value)));
+    volVal.textContent = t.volume >= 0 ? t.volume : "?";
+  }
+  if (online && t.volumeMode === "upnp") {
+    tv("Volume", t.mac).then(v => { volCache[t.mac] = v; if (!dragging) { vol.value = v; volVal.textContent = v; } }).catch(() => { volVal.textContent = "?"; });
+  }
+  const mute = el("span", { class: "ico btn", title: "Без звука", onclick: () => safe(() => tv("Key", t.mac, "KEY_MUTE")) }, "🔊");
+
+  // Backlight
+  let blRow;
+  if (t.backlightOn) {
+    const blVal = el("span", { class: "val" }, t.backlight >= 0 ? t.backlight : "?");
+    const bl = el("input", { type: "range", min: 0, max: t.backlightMax, value: t.backlight >= 0 ? t.backlight : Math.round(t.backlightMax / 2) });
+    bl.addEventListener("input", () => { blVal.textContent = bl.value; });
+    bl.addEventListener("change", () => safe(() => tv("SetBacklight", t.mac, +bl.value)));
+    blRow = el("div", { class: "ctl" }, el("span", { class: "ico", title: "Подсветка" }, "☀"), bl, blVal);
+  } else {
+    blRow = el("div", { class: "hint" }, "Подсветка: ", el("a", { onclick: () => tv("OpenSettings") }, "настроить"));
+  }
+
+  return el("section", { class: "tv" + (online ? "" : " offline") },
+    el("header", {},
+      el("span", { class: "dot" + (online ? " on" : ""), title: online ? "Включён" : "Выключен" }),
+      el("span", { class: "name", title: t.model }, t.name || t.model),
+      power),
+    el("div", { class: "ctl" }, mute, vol, volVal),
+    blRow,
+    el("footer", {},
+      el("span", { class: "small muted" }, online ? "включён" : "выключен"),
+      el("button", { onclick: () => tv("OpenRemote", t.mac) }, "Пульт")));
+}
+
+function render(tvs) {
+  list.replaceChildren(...(tvs.length ? tvs.map(group)
+    : [el("div", { class: "empty" }, "Нет телевизоров для панели.", el("br"), el("a", { style: "color:var(--accent);cursor:pointer", onclick: () => tv("OpenSettings") }, "Открыть настройки"))]));
+  requestAnimationFrame(() => tv("ResizePanel", Math.ceil(document.documentElement.scrollHeight)));
+}
+
+async function load() { render(await tv("PanelState")); }
+
+document.addEventListener("pointerdown", e => { if (e.target.type === "range") dragging = true; });
+document.addEventListener("pointerup", () => { dragging = false; });
+$("#settings").onclick = () => tv("OpenSettings");
+Events.On("state", () => { if (!dragging) safe(load); });
+window.addEventListener("focus", () => safe(load));
+safe(load);
+</script>
+</body>
+</html>

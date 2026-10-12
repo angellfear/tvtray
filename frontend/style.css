@@ -1,0 +1,85 @@
+:root {
+  --bg: #f3f3f3;
+  --surface: #ffffff;
+  --surface-2: #ebebeb;
+  --border: #d6d6d6;
+  --text: #1b1b1b;
+  --muted: #6b6b6b;
+  --accent: #0a64c8;
+  --accent-text: #ffffff;
+  --ok: #1a8a3a;
+  --off: #9a9a9a;
+  --danger: #c42b1c;
+  --radius: 8px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202020;
+    --surface: #2b2b2b;
+    --surface-2: #363636;
+    --border: #404040;
+    --text: #f0f0f0;
+    --muted: #a0a0a0;
+    --accent: #4ca2ff;
+    --accent-text: #0b1a2b;
+    --ok: #4cc26a;
+    --off: #6e6e6e;
+    --danger: #ff6b5e;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+input, select, textarea { user-select: text; -webkit-user-select: text; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.08); }
+button:active { filter: brightness(0.92); }
+button:disabled { opacity: .45; cursor: default; filter: none; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--danger); }
+button.icon { padding: 4px 8px; min-width: 32px; }
+
+input[type=text], input[type=number], select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+input[type=range] { width: 100%; accent-color: var(--accent); }
+label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+label.check input { width: 16px; height: 16px; accent-color: var(--accent); }
+
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.grow { flex: 1; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); flex: none; }
+.dot.on { background: var(--ok); }
+.error { color: var(--danger); font-size: 12px; min-height: 16px; }
+
+.toast {
+  position: fixed; left: 12px; right: 12px; bottom: 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 12px; font-size: 12px; opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+.toast.show { opacity: 1; }

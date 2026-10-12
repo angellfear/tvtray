@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>TvTray — настройки</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { padding: 16px 20px 40px; }
+  h2 { font-size: 16px; margin: 22px 0 10px; }
+  h2:first-child { margin-top: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
+  .form { display: grid; grid-template-columns: 220px 1fr; gap: 8px 14px; align-items: center; }
+  .form .full { grid-column: 1 / -1; }
+  .form input[type=number] { width: 90px; }
+  .form input[type=text] { width: 100%; }
+  .tv-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .tv-head input { font-weight: 600; flex: 1; }
+  .meta { font-size: 12px; color: var(--muted); margin: -6px 0 12px 19px; }
+  details { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+  summary { cursor: pointer; font-weight: 600; }
+  .help { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 400; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  code { font-family: Consolas, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h2>Телевизоры</h2>
+<div class="card">
+  <div class="row">
+    <button class="primary" id="scan">Сканировать сеть</button>
+    <span class="muted small" id="scanStatus">Найдёт все Samsung Tizen ТВ в локальной сети (они должны быть включены).</span>
+  </div>
+  <div id="scanResults"></div>
+</div>
+<div id="tvs"></div>
+
+<h2>Общие</h2>
+<div class="card form">
+  <span>Задержка выключения ТВ, с</span>
+  <span class="row"><input type="number" id="offDelay" min="0" max="600"><span class="help">после того как Windows погасит дисплей</span></span>
+  <span>Ждать включения ТВ, с</span>
+  <span class="row"><input type="number" id="wakeTimeout" min="5" max="300"><span class="help">сколько слать Wake-on-LAN при пробуждении</span></span>
+  <span>Автозапуск</span>
+  <label class="check"><input type="checkbox" id="autostart"> Запускать вместе с Windows</label>
+  <span>Файл настроек</span>
+  <code id="ini"></code>
+  <span></span>
+  <div class="actions"><button class="danger" id="uninstall">Удалить TvTray…</button><button id="quit">Выйти из TvTray</button></div>
+</div>
+
+<script type="module">
+import { tv, Events, $, el, safe, toast, debounce } from "/common.js";
+
+let state = null;
+
+const num = (v, d) => Number.isFinite(+v) && v !== "" ? +v : d;
+const keysText = a => (a || []).join(", ");
+const keysList = s => s.split(/[,\s;]+/).filter(Boolean).map(k => k.toUpperCase());
+
+function tvCard(t, online) {
+  const save = debounce(() => safe(async () => { await tv("SaveTV", t); }), 300);
+  const bind = (input, get, set) => {
+    get(input);
+    input.addEventListener(input.type === "checkbox" || input.tagName === "SELECT" ? "change" : "input", () => { set(input); save(); });
+    return input;
+  };
+  const text = (get, set) => bind(el("input", { type: "text" }), i => i.value = get(), i => set(i.value));
+  const number = (get, set, min, max) => bind(el("input", { type: "number", min, max }), i => i.value = get(), i => set(num(i.value, get())));
+  const check = (label, get, set) => el("label", { class: "check" },
+    bind(el("input", { type: "checkbox" }), i => i.checked = get(), i => set(i.checked)), label);
+
+  const b = t.backlight;
+  const blCurrent = number(() => b.current, v => b.current = v, -1, 100);
+
+  const card = el("div", { class: "card" },
+    el("div", { class: "tv-head" },
+      el("span", { class: "dot" + (online ? " on" : ""), title: online ? "Включён" : "Выключен / не в сети" }),
+      text(() => t.name, v => t.name = v),
+      el("button", { class: "danger", onclick: () => safe(async () => {
+        if (!confirm(`Удалить «${t.name}» из списка?`)) return;
+        await tv("RemoveTV", t.mac); load();
+      }) }, "Удалить")),
+    el("div", { class: "meta" }, `${t.model} · IP ${t.ip} · MAC ${t.mac}`),
+
+    el("div", { class: "form" },
+      el("span", {}, "Питание"),
+      check("Выключать и включать вместе с дисплеем ПК", () => t.linkPower, v => t.linkPower = v),
+      el("span", {}, "Панель в трее"),
+      check("Показывать по левому клику", () => t.showInPanel, v => t.showInPanel = v),
+      el("span", {}, "Громкость"),
+      bind(el("select", {},
+        el("option", { value: "upnp" }, "UPnP — точное значение (рекомендуется)"),
+        el("option", { value: "keys" }, "Кнопки пульта VOL+/VOL−")),
+        i => i.value = t.volumeMode, i => t.volumeMode = i.value),
+    ),
+
+    el("details", { open: !b.enabled ? false : undefined },
+      el("summary", {}, "Подсветка (макрос пульта)"),
+      el("p", { class: "help" },
+        "Приложение открывает меню ТВ кнопками «Открыть», затем жмёт ◀/▶ на разницу между текущим и нужным значением и закрывает меню. ",
+        "Подберите «Открыть» так, чтобы после неё на экране был активен ползунок подсветки — проверьте кнопкой «Тест»."),
+      el("div", { class: "form" },
+        el("span", {}, "Включить"),
+        check("Показывать ползунок подсветки в панели", () => b.enabled, v => b.enabled = v),
+        el("span", {}, "Кнопки «Открыть»"),
+        text(() => keysText(b.openKeys), v => b.openKeys = keysList(v)),
+        el("span", {}, "Кнопки «Закрыть»"),
+        text(() => keysText(b.closeKeys), v => b.closeKeys = keysList(v)),
+        el("span", {}, "Максимум шкалы"),
+        number(() => b.max, v => b.max = v, 1, 100),
+        el("span", {}, "Пауза после пунктов меню, мс"),
+        number(() => b.navDelayMs, v => b.navDelayMs = v, 100, 5000),
+        el("span", {}, "Пауза между ◀/▶, мс"),
+        number(() => b.stepDelayMs, v => b.stepDelayMs = v, 30, 2000),
+        el("span", {}, "Текущее значение на ТВ"),
+        el("span", { class: "row" }, blCurrent, el("span", { class: "help" }, "−1 = неизвестно (при следующей установке сначала уйдёт в 0)")),
+        el("span", {}, "Проверка"),
+        el("div", { class: "actions" },
+          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, keysText(b.openKeys))) }, "Тест: открыть"),
+          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, "KEY_LEFT")) }, "◀"),
+          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, "KEY_RIGHT")) }, "▶"),
+          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, keysText(b.closeKeys))) }, "Тест: закрыть"),
+          el("button", { onclick: () => safe(async () => {
+            const v = prompt(`Выставить подсветку (0–${b.max}) с синхронизацией через ноль:`, Math.max(0, b.current));
+            if (v === null) return;
+            await tv("SyncBacklight", t.mac, num(v, 0));
+            toast("Макрос отправлен");
+          }) }, "Синхронизировать…"),
+        ),
+      ),
+    ),
+  );
+  return card;
+}
+
+function renderTVs() {
+  const list = state.config.tvs || [];
+  $("#tvs").replaceChildren(...(list.length ? list.map(t => tvCard(t, state.online[t.mac]))
+    : [el("div", { class: "card muted" }, "Телевизоры не добавлены. Нажмите «Сканировать сеть».")]));
+}
+
+async function load() {
+  state = await tv("Settings");
+  const c = state.config;
+  $("#offDelay").value = c.offDelaySec;
+  $("#wakeTimeout").value = c.wakeTimeoutSec;
+  $("#autostart").checked = c.autostart;
+  $("#ini").textContent = state.iniPath;
+  renderTVs();
+}
+
+const saveGeneral = debounce(() => safe(() =>
+  tv("SaveGeneral", num($("#offDelay").value, 5), num($("#wakeTimeout").value, 40), $("#autostart").checked)), 400);
+["#offDelay", "#wakeTimeout"].forEach(s => $(s).addEventListener("input", saveGeneral));
+$("#autostart").addEventListener("change", saveGeneral);
+
+$("#scan").onclick = () => safe(async () => {
+  $("#scan").disabled = true;
+  $("#scanStatus").textContent = "Сканирую…";
+  try {
+    const found = await tv("Scan");
+    $("#scanStatus").textContent = found.length ? `Найдено: ${found.length}` : "Ничего не найдено. ТВ должен быть включён и в той же сети.";
+    $("#scanResults").replaceChildren(found.length ? el("table", {},
+      el("tr", {}, el("th", {}, "Имя"), el("th", {}, "Модель"), el("th", {}, "IP"), el("th", {}, "MAC"), el("th", {}, "Сеть"), el("th", {})),
+      found.map(f => el("tr", {},
+        el("td", {}, f.name), el("td", {}, f.model), el("td", {}, f.ip), el("td", {}, el("code", {}, f.mac)),
+        el("td", {}, f.net === "wireless" ? "Wi-Fi" : "кабель"),
+        el("td", {}, f.added ? el("span", { class: "muted small" }, "добавлен")
+          : el("button", { onclick: e => safe(async () => { e.target.disabled = true; await tv("AddTV", f); f.added = true; e.target.replaceWith(el("span", { class: "muted small" }, "добавлен")); await load(); }) }, "Добавить"))))) : "");
+  } finally {
+    $("#scan").disabled = false;
+  }
+});
+
+$("#uninstall").onclick = () => safe(async () => {
+  if (!confirm("Удалить TvTray? Будут удалены автозапуск, ярлык и папка программы вместе с настройками.")) return;
+  await tv("Uninstall");
+});
+$("#quit").onclick = () => tv("Quit");
+
+// Refresh online dots without disturbing inputs being edited.
+Events.On("state", ev => {
+  if (!state) return;
+  for (const t of ev.data) state.online[t.mac] = t.online;
+  document.querySelectorAll("#tvs .card").forEach((card, i) => {
+    const t = state.config.tvs[i];
+    const dot = card.querySelector(".dot");
+    if (t && dot) dot.className = "dot" + (state.online[t.mac] ? " on" : "");
+  });
+});
+window.addEventListener("focus", () => { if (!document.activeElement || document.activeElement === document.body) safe(load); });
+safe(load);
+</script>
+</body>
+</html>

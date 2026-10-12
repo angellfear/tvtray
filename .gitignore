@@ -1,0 +1,4 @@
+build/
+*.syso
+TvTray.ini
+TvTray.log*
