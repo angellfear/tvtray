@@ -77,6 +77,35 @@ label.check input { width: 16px; height: 16px; accent-color: var(--accent); }
 .dot.on { background: var(--ok); }
 .error { color: var(--danger); font-size: 12px; min-height: 16px; }
 
+/* key sequence editor */
+.keyseq {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  min-height: 32px; padding: 3px 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+}
+.keyseq:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 1px 4px 1px 10px; font-size: 12px; white-space: nowrap; cursor: default;
+}
+.chip .x {
+  border: 0; background: none; padding: 0 5px; font-size: 14px; line-height: 1;
+  color: var(--muted); border-radius: 50%;
+}
+.chip .x:hover { color: var(--danger); filter: none; }
+.keyseq .add { color: var(--accent); font-size: 12px; padding: 0 6px; }
+.minirc {
+  position: absolute; z-index: 10; width: 250px; padding: 10px;
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.minirc-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px; }
+.minirc-row.three { grid-template-columns: repeat(3, 1fr); padding: 0 30px; }
+.minirc-row button { padding: 6px 2px; font-size: 12px; }
+.minirc-row button.ok { border-radius: 50%; font-weight: 600; aspect-ratio: 1; }
+
 .toast {
   position: fixed; left: 12px; right: 12px; bottom: 12px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);

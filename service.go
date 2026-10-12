@@ -117,8 +117,8 @@ func (s *TvService) OpenRemote(mac string) {
 		w = s.app.Window.NewWithOptions(application.WebviewWindowOptions{
 			Name:                "remote-" + mac,
 			Title:               "Пульт — " + tv.Name,
-			Width:               320,
-			Height:              640,
+			Width:               240,
+			Height:              520, // remote.html fits the window to its content
 			DisableResize:       true,
 			URL:                 "/remote.html?mac=" + url.QueryEscape(mac),
 			MaximiseButtonState: application.ButtonHidden,
@@ -132,6 +132,18 @@ func (s *TvService) OpenRemote(mac string) {
 	s.mu.Unlock()
 	w.Show()
 	w.Focus()
+}
+
+// FitWindow resizes a window so its client area matches the content size.
+// innerW/innerH is the current client size as seen by the page; the
+// difference to the outer size is the window frame.
+func (s *TvService) FitWindow(name string, contentW, contentH, innerW, innerH int) {
+	w, ok := s.app.Window.GetByName(name)
+	if !ok {
+		return
+	}
+	outerW, outerH := w.Size()
+	w.SetSize(contentW+outerW-innerW, contentH+outerH-innerH)
 }
 
 func (s *TvService) OpenSettings() {

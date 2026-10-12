@@ -5,28 +5,29 @@
 <title>Пульт</title>
 <link rel="stylesheet" href="/style.css">
 <style>
-  body { padding: 14px; }
-  .remote { display: flex; flex-direction: column; gap: 12px; }
-  .grid { display: grid; gap: 6px; }
+  html, body { overflow: hidden; }
+  body { padding: 8px; width: max-content; }
+  .remote { display: flex; flex-direction: column; gap: 6px; width: 196px; }
+  .grid { display: grid; gap: 4px; }
   .g3 { grid-template-columns: repeat(3, 1fr); }
   .g4 { grid-template-columns: repeat(4, 1fr); }
-  .remote button { padding: 8px 4px; font-size: 13px; }
-  .dpad { display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 48px); gap: 6px; justify-content: center; }
-  .dpad button { font-size: 18px; padding: 0; }
-  .dpad .ok { border-radius: 50%; font-size: 14px; font-weight: 600; }
-  .rocker { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .rocker > div { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
-  .rocker span { text-align: center; font-size: 11px; color: var(--muted); }
+  .remote button { padding: 4px 2px; font-size: 11px; min-width: 0; border-radius: 5px; }
+  .dpad { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 34px); gap: 4px; justify-content: center; }
+  .remote .dpad button { font-size: 14px; padding: 0; }
+  .remote .dpad .ok { border-radius: 50%; font-size: 12px; font-weight: 600; }
+  .rocker { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .rocker > div { display: grid; grid-template-columns: 1fr auto 1fr; gap: 4px; align-items: center; }
+  .rocker span { font-size: 10px; color: var(--muted); }
   .top { display: flex; justify-content: space-between; align-items: center; }
-  .power { color: var(--danger); font-size: 16px; }
-  kbd { font: 11px "Segoe UI"; color: var(--muted); }
+  .top b { font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .remote .power { color: var(--danger); padding: 3px 8px; }
 </style>
 </head>
 <body>
-<div class="remote">
+<div class="remote" title="Клавиатура: стрелки, Enter = OK, Backspace = Назад, Esc = Exit, +/− громкость, M = mute, H = Home, цифры">
   <div class="top">
     <span class="row"><span class="dot" id="dot"></span><b id="name">ТВ</b></span>
-    <button class="icon power" data-power title="Питание">⏻</button>
+    <button class="power" data-power title="Питание"></button>
   </div>
 
   <div class="grid g4">
@@ -49,29 +50,26 @@
   </div>
 
   <div class="rocker">
-    <div><button data-key="KEY_VOLUP">＋</button><span>Громкость</span><button data-key="KEY_VOLDOWN">－</button></div>
-    <div><button data-key="KEY_CHUP">▲</button><span>Канал</span><button data-key="KEY_CHDOWN">▼</button></div>
+    <div><button data-key="KEY_VOLDOWN">－</button><span>Vol</span><button data-key="KEY_VOLUP">＋</button></div>
+    <div><button data-key="KEY_CHDOWN">▼</button><span>Ch</span><button data-key="KEY_CHUP">▲</button></div>
   </div>
 
   <div class="grid g4">
-    <button data-key="KEY_MUTE">🔇</button>
+    <button data-key="KEY_MUTE">Mute</button>
     <button data-key="KEY_REWIND">⏪</button>
     <button data-key="KEY_PLAY">▶</button>
     <button data-key="KEY_PAUSE">⏸</button>
     <button data-key="KEY_STOP">⏹</button>
     <button data-key="KEY_FF">⏩</button>
-    <button data-key="KEY_PRECH">PRE-CH</button>
+    <button data-key="KEY_PRECH">Pre-Ch</button>
     <button data-key="KEY_GUIDE">Guide</button>
   </div>
 
-  <div class="grid g3">
-    <button data-key="KEY_1">1</button><button data-key="KEY_2">2</button><button data-key="KEY_3">3</button>
-    <button data-key="KEY_4">4</button><button data-key="KEY_5">5</button><button data-key="KEY_6">6</button>
-    <button data-key="KEY_7">7</button><button data-key="KEY_8">8</button><button data-key="KEY_9">9</button>
-    <button data-key="KEY_HDMI">HDMI</button><button data-key="KEY_0">0</button><button data-key="KEY_CH_LIST">CH List</button>
+  <div class="grid g4">
+    <button data-key="KEY_1">1</button><button data-key="KEY_2">2</button><button data-key="KEY_3">3</button><button data-key="KEY_4">4</button>
+    <button data-key="KEY_5">5</button><button data-key="KEY_6">6</button><button data-key="KEY_7">7</button><button data-key="KEY_8">8</button>
+    <button data-key="KEY_9">9</button><button data-key="KEY_0">0</button><button data-key="KEY_HDMI">HDMI</button><button data-key="KEY_CH_LIST">List</button>
   </div>
-
-  <div class="small muted">Клавиатура: стрелки, Enter = OK, Backspace = Назад, Esc = Exit, +/− громкость, M = mute, H = Home</div>
 </div>
 <script type="module">
 import { tv, Events, $, safe, powerIcon } from "/common.js";
@@ -102,6 +100,19 @@ function show(list) {
 }
 Events.On("state", ev => show(ev.data));
 tv("Settings").then(s => show(s.config.tvs.map(t => ({ ...t, online: s.online[t.mac] }))));
+
+// Size the window to the content (no scrollbars at any DPI).
+let fits = 0; // a few passes settle DPI rounding; never loop forever
+function fit() {
+  if (++fits > 4) return;
+  const r = document.body.getBoundingClientRect();
+  const cw = Math.ceil(r.width), ch = Math.ceil(r.height);
+  if (Math.abs(window.innerWidth - cw) > 1 || Math.abs(window.innerHeight - ch) > 1) {
+    tv("FitWindow", "remote-" + mac, cw, ch, window.innerWidth, window.innerHeight);
+  }
+}
+requestAnimationFrame(fit);
+window.addEventListener("resize", () => setTimeout(fit, 50));
 </script>
 </body>
 </html>

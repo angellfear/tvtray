@@ -54,12 +54,12 @@
 
 <script type="module">
 import { tv, Events, $, el, safe, toast, debounce } from "/common.js";
+import { keySeqField } from "/keyseq.js";
 
 let state = null;
 
 const num = (v, d) => Number.isFinite(+v) && v !== "" ? +v : d;
 const keysText = a => (a || []).join(", ");
-const keysList = s => s.split(/[,\s;]+/).filter(Boolean).map(k => k.toUpperCase());
 
 function tvCard(t, online) {
   const save = debounce(() => safe(async () => { await tv("SaveTV", t); }), 300);
@@ -107,9 +107,9 @@ function tvCard(t, online) {
         el("span", {}, "Включить"),
         check("Показывать ползунок подсветки в панели", () => b.enabled, v => b.enabled = v),
         el("span", {}, "Кнопки «Открыть»"),
-        text(() => keysText(b.openKeys), v => b.openKeys = keysList(v)),
+        keySeqField({ mac: t.mac, get: () => b.openKeys || [], set: k => { b.openKeys = k; save(); } }),
         el("span", {}, "Кнопки «Закрыть»"),
-        text(() => keysText(b.closeKeys), v => b.closeKeys = keysList(v)),
+        keySeqField({ mac: t.mac, get: () => b.closeKeys || [], set: k => { b.closeKeys = k; save(); } }),
         el("span", {}, "Максимум шкалы"),
         number(() => b.max, v => b.max = v, 1, 100),
         el("span", {}, "Пауза после пунктов меню, мс"),
