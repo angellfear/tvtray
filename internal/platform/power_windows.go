@@ -106,7 +106,9 @@ func createPowerWindow(h PowerHandler) (windows.HWND, error) {
 
 	initial := true
 	lastDisplay := -1
-	wndProc := func(hwnd windows.HWND, message uint32, wParam, lParam uintptr) uintptr {
+	// lParam is unsafe.Pointer (pointer-sized, allowed by NewCallback) so the
+	// PBT_POWERSETTINGCHANGE payload can be read without uintptr conversion.
+	wndProc := func(hwnd windows.HWND, message uint32, wParam uintptr, lParam unsafe.Pointer) uintptr {
 		if message == wmPowerBroadcast {
 			switch wParam {
 			case pbtAPMSuspend:
@@ -115,7 +117,7 @@ func createPowerWindow(h PowerHandler) (windows.HWND, error) {
 				// Both arrive on a user-initiated wake; the controller dedups.
 				h(Resume)
 			case pbtPowerSettingChange:
-				s := (*powerBroadcastSetting)(unsafe.Pointer(lParam))
+				s := (*powerBroadcastSetting)(lParam)
 				if s.PowerSetting == guidConsoleDisplayState && s.DataLength >= 1 {
 					state := int(s.Data[0])
 					if state == 2 { // dimmed counts as on
@@ -135,7 +137,7 @@ func createPowerWindow(h PowerHandler) (windows.HWND, error) {
 			}
 			return 1
 		}
-		r, _, _ := procDefWindowProcW.Call(uintptr(hwnd), uintptr(message), wParam, lParam)
+		r, _, _ := procDefWindowProcW.Call(uintptr(hwnd), uintptr(message), wParam, uintptr(lParam))
 		return r
 	}
 

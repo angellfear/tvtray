@@ -184,6 +184,7 @@ type SettingsInfo struct {
 	Config  config.Config   `json:"config"`
 	Online  map[string]bool `json:"online"`
 	IniPath string          `json:"iniPath"`
+	Version string          `json:"version"`
 }
 
 func (s *TvService) Settings() SettingsInfo {
@@ -192,7 +193,7 @@ func (s *TvService) Settings() SettingsInfo {
 	for _, tv := range cfg.TVs {
 		on[tv.MAC] = s.ctrl.Online(tv.MAC)
 	}
-	return SettingsInfo{Config: cfg, Online: on, IniPath: s.store.Path()}
+	return SettingsInfo{Config: cfg, Online: on, IniPath: s.store.Path(), Version: version}
 }
 
 type ScanItem struct {
@@ -381,6 +382,8 @@ func (s *TvService) Uninstall() error {
 }
 
 func (s *TvService) Quit() { s.app.Quit() }
+
+func (s *TvService) OpenRepo() { s.app.Browser.OpenURL("https://github.com/" + presets.Repo) }
 
 // ---- installer -------------------------------------------------------------
 

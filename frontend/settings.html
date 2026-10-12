@@ -46,6 +46,8 @@
   <span class="row"><input type="number" id="wakeTimeout" min="5" max="300"><span class="help">сколько слать Wake-on-LAN при пробуждении</span></span>
   <span>Автозапуск</span>
   <label class="check"><input type="checkbox" id="autostart"> Запускать вместе с Windows</label>
+  <span>Версия</span>
+  <span><span id="version"></span> · <a href="#" id="repo" style="color:var(--accent)">GitHub</a></span>
   <span>Файл настроек</span>
   <code id="ini"></code>
   <span></span>
@@ -184,6 +186,7 @@ async function load() {
   $("#wakeTimeout").value = c.wakeTimeoutSec;
   $("#autostart").checked = c.autostart;
   $("#ini").textContent = state.iniPath;
+  $("#version").textContent = state.version;
   renderTVs();
 }
 
@@ -215,6 +218,7 @@ $("#uninstall").onclick = () => safe(async () => {
   await tv("Uninstall");
 });
 $("#quit").onclick = () => tv("Quit");
+$("#repo").onclick = e => { e.preventDefault(); tv("OpenRepo"); };
 
 // Refresh online dots without disturbing inputs being edited.
 Events.On("state", ev => {

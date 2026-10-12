@@ -1,0 +1,56 @@
+name: Release
+
+# Builds TvTray.exe and publishes it as a GitHub release.
+# Trigger: push a tag like v1.2.3, or run manually with a version.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the leading v (e.g. 1.2.3)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}".TrimStart("v") }
+          if ($v -notmatch '^\d+\.\d+\.\d+([-+].*)?$') { throw "Bad version: $v" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: go vet ./...
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1 -Version ${{ steps.ver.outputs.version }}
+
+      - name: Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.ver.outputs.version }}"
+          $prev = git describe --tags --abbrev=0 "$tag^" 2>$null
+          $range = if ($prev) { "$prev..$tag" } else { $tag }
+          if (-not (git rev-parse -q --verify "refs/tags/$tag")) { $range = if ($prev) { "$prev..HEAD" } else { "HEAD" } }
+          $notes = (git log --no-merges --format="- %s" $range) -join "`n"
+          $hash = (Get-FileHash build/TvTray.exe -Algorithm SHA256).Hash.ToLower()
+          $body = "## Изменения`n$notes`n`n## Установка`nСкачайте **TvTray.exe** и запустите — он предложит установиться в Program Files или работать без установки.`n`nSHA-256: ``$hash``"
+          gh release create $tag build/TvTray.exe --title "TvTray $tag" --notes $body --target $env:GITHUB_SHA

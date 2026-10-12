@@ -32,6 +32,9 @@ var embedded embed.FS
 //go:embed presets/*.json
 var builtinPresets embed.FS
 
+// version is set at build time: -ldflags "-X main.version=1.2.3".
+var version = "dev"
+
 func assets() application.AssetOptions {
 	sub, _ := fs.Sub(embedded, "frontend")
 	return application.AssetOptions{Handler: application.BundledAssetFileServer(sub)}
@@ -97,6 +100,14 @@ func openLog() io.Writer {
 	return w
 }
 
+// instanceID lets a dev copy run next to the installed one: TVTRAY_INSTANCE=dev.
+func instanceID() string {
+	if id := os.Getenv("TVTRAY_INSTANCE"); id != "" {
+		return "tvtray.samsung.tray." + id
+	}
+	return "tvtray.samsung.tray"
+}
+
 // devtoolsArgs exposes WebView2 over CDP for debugging: TVTRAY_DEVTOOLS=9333.
 func devtoolsArgs() []string {
 	if port := os.Getenv("TVTRAY_DEVTOOLS"); port != "" {
@@ -126,7 +137,7 @@ func runApp() {
 		Logger:   wailsLog,
 		LogLevel: slog.LevelWarn,
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID:               "tvtray.samsung.tray",
+			UniqueID:               instanceID(),
 			OnSecondInstanceLaunch: func(application.SecondInstanceData) { svc.OpenSettings() },
 		},
 		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true, AdditionalBrowserArgs: devtoolsArgs()},
@@ -181,7 +192,7 @@ func runApp() {
 			svc.OpenSettings()
 		}()
 	}
-	log.Info("started", "ini", store.Path())
+	log.Info("started", "version", version, "ini", store.Path())
 	if err := app.Run(); err != nil {
 		log.Error("run", "err", err)
 		os.Exit(1)
