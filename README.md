@@ -1,6 +1,6 @@
 # TvTray
 
-Иконка в трее Windows для телевизоров Samsung (Tizen), подключённых к ПК как монитор.
+Иконка в трее Windows и Linux для телевизоров Samsung (Tizen), подключённых к ПК как монитор.
 
 **Языки:** русский, English, Deutsch.
 
@@ -20,6 +20,14 @@
 Скачайте `TvTray.exe` из [последнего релиза](https://github.com/angellfear/tvtray/releases/latest) и запустите. Установщик предложит язык, папку (по умолчанию `Program Files\TvTray`) и автозапуск.
 
 <img src="docs/screenshots/installer.png" alt="Установщик" width="480">
+
+### Linux
+
+Скачайте `tvtray-linux-amd64.tar.gz`, распакуйте и запустите `./tvtray` — установщик положит программу в `~/.local/share/tvtray` (без root) и добавит её в меню приложений.
+
+- Нужны GTK 3 и WebKit2GTK 4.1: `sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0` (Debian 12+/Ubuntu 22.04+), `sudo dnf install gtk3 webkit2gtk4.1` (Fedora).
+- Иконка в трее работает через StatusNotifierItem: KDE, XFCE, Cinnamon — сразу; GNOME — с расширением [AppIndicator](https://extensions.gnome.org/extension/615/appindicator-support/).
+- Гашение дисплея определяется так: GNOME — точно (Mutter), X11 — по DPMS (нужен `xset`, пакет `x11-xserver-utils`), иначе — по включению хранителя экрана (KDE и др.). Сон — через logind.
 
 ## Настройки
 
@@ -51,7 +59,7 @@
 
 Результат: `build\TvTray.exe`. Диагностика из консоли: `go run . --scan`.
 
-Код Wails v3 (WebView2), всё ОС-зависимое — в `internal/platform`. Для Linux остаётся реализовать уведомления о дисплее/сне.
+Код на Wails v3 (WebView2 на Windows, WebKitGTK на Linux); всё ОС-зависимое — в `internal/platform`.
 
 ## Пресеты
 
