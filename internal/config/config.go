@@ -54,6 +54,8 @@ type Config struct {
 	WakeTimeoutSec int `json:"wakeTimeoutSec"`
 	// Start with Windows (HKCU Run); applied by the app on every start.
 	Autostart bool `json:"autostart"`
+	// UI language: ru, en, de ("" = system language).
+	Language string `json:"language"`
 }
 
 func DefaultBacklight() Backlight {
@@ -126,6 +128,7 @@ func Load(path string) (*Store, error) {
 	s.cfg.OffDelaySec = g.Key("off_delay_sec").MustInt(5)
 	s.cfg.WakeTimeoutSec = g.Key("wake_timeout_sec").MustInt(40)
 	s.cfg.Autostart = g.Key("autostart").MustBool(true)
+	s.cfg.Language = g.Key("language").String()
 
 	for _, sec := range f.Sections() {
 		if !strings.HasPrefix(sec.Name(), "tv ") {
@@ -233,6 +236,7 @@ func (s *Store) saveLocked() error {
 	g.Key("off_delay_sec").SetValue(fmt.Sprint(s.cfg.OffDelaySec))
 	g.Key("wake_timeout_sec").SetValue(fmt.Sprint(s.cfg.WakeTimeoutSec))
 	g.Key("autostart").SetValue(fmt.Sprint(s.cfg.Autostart))
+	g.Key("language").SetValue(s.cfg.Language)
 
 	tvs := append([]*TV(nil), s.cfg.TVs...)
 	sort.SliceStable(tvs, func(i, j int) bool { return tvs[i].Name < tvs[j].Name })

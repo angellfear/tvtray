@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Пульт</title>
+<title>TvTray</title>
 <link rel="stylesheet" href="/style.css">
 <style>
   html, body { overflow: hidden; }
@@ -21,13 +21,14 @@
   .top { display: flex; justify-content: space-between; align-items: center; }
   .top b { font-size: 12px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .remote .power { color: var(--danger); padding: 3px 8px; }
+  .remote .dbl { letter-spacing: -3px; }
 </style>
 </head>
 <body>
-<div class="remote" title="Клавиатура: стрелки, Enter = OK, Backspace = Назад, Esc = Exit, +/− громкость, M = mute, H = Home, цифры">
+<div class="remote" data-i18n-title="remote.hint">
   <div class="top">
-    <span class="row"><span class="dot" id="dot"></span><b id="name">ТВ</b></span>
-    <button class="power" data-power title="Питание"></button>
+    <span class="row"><span class="dot" id="dot"></span><b id="name">TV</b></span>
+    <button class="power" data-power data-i18n-title="remote.power"></button>
   </div>
 
   <div class="grid g4">
@@ -44,7 +45,7 @@
   </div>
 
   <div class="grid g3">
-    <button data-key="KEY_RETURN">↩ Назад</button>
+    <button data-key="KEY_RETURN" data-i18n="key.back"></button>
     <button data-key="KEY_TOOLS">Tools</button>
     <button data-key="KEY_EXIT">Exit</button>
   </div>
@@ -56,11 +57,11 @@
 
   <div class="grid g4">
     <button data-key="KEY_MUTE">Mute</button>
-    <button data-key="KEY_REWIND">⏪</button>
+    <button data-key="KEY_REWIND" class="dbl">◀◀</button>
     <button data-key="KEY_PLAY">▶</button>
     <button data-key="KEY_PAUSE">⏸</button>
     <button data-key="KEY_STOP">⏹</button>
-    <button data-key="KEY_FF">⏩</button>
+    <button data-key="KEY_FF" class="dbl">▶▶</button>
     <button data-key="KEY_PRECH">Pre-Ch</button>
     <button data-key="KEY_GUIDE">Guide</button>
   </div>
@@ -73,6 +74,9 @@
 </div>
 <script type="module">
 import { tv, Events, $, safe, powerIcon } from "/common.js";
+import { initI18n } from "/i18n.js";
+
+await initI18n(() => tv("Language"));
 $("[data-power]").innerHTML = powerIcon;
 
 const mac = new URLSearchParams(location.search).get("mac");

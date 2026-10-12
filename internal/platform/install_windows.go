@@ -11,6 +11,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"tvtray/internal/i18n"
 )
 
 // DefaultInstallDir is where the installer proposes to put the app.
@@ -69,7 +71,7 @@ func RunElevated(exe string, args ...string) (int, error) {
 	sei.cbSize = uint32(unsafe.Sizeof(sei))
 	if r, _, e := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&sei))); r == 0 {
 		if errors.Is(e, windows.ERROR_CANCELLED) {
-			return -1, errors.New("запрос прав администратора отклонён")
+			return -1, i18n.Errorf("err.uacDenied")
 		}
 		return -1, e
 	}

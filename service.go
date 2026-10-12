@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/url"
@@ -16,6 +14,7 @@ import (
 
 	"tvtray/internal/config"
 	"tvtray/internal/controller"
+	"tvtray/internal/i18n"
 	"tvtray/internal/install"
 	"tvtray/internal/platform"
 	"tvtray/internal/presets"
@@ -122,7 +121,7 @@ func (s *TvService) OpenRemote(mac string) {
 	if w == nil {
 		w = s.app.Window.NewWithOptions(application.WebviewWindowOptions{
 			Name:                "remote-" + mac,
-			Title:               "Пульт — " + tv.Name,
+			Title:               i18n.T("title.remote", tv.Name),
 			Width:               240,
 			Height:              520, // remote.html fits the window to its content
 			DisableResize:       true,
@@ -158,7 +157,7 @@ func (s *TvService) OpenSettings() {
 	if s.settings == nil {
 		s.settings = s.app.Window.NewWithOptions(application.WebviewWindowOptions{
 			Name:      "settings",
-			Title:     "TvTray — настройки",
+			Title:     i18n.T("title.settings"),
 			Width:     760,
 			Height:    700,
 			MinWidth:  600,
@@ -230,7 +229,7 @@ func cleanName(n string) string { return strings.TrimSpace(strings.TrimPrefix(n,
 func (s *TvService) AddTV(item ScanItem) error {
 	mac := samsung.NormalizeMAC(item.MAC)
 	if mac == "" {
-		return errors.New("неверный MAC-адрес")
+		return i18n.Errorf("err.badMAC")
 	}
 	err := s.store.Update(func(c *config.Config) {
 		for _, tv := range c.TVs {
@@ -303,14 +302,14 @@ func (s *TvService) ApplyPreset(mac, id string) error {
 			return err
 		}
 	}
-	return errors.New("пресет не найден")
+	return i18n.Errorf("err.noPreset")
 }
 
 // UpdatePresets downloads the presets folder from GitHub.
 func (s *TvService) UpdatePresets() (int, error) {
 	n, err := presets.Download(context.Background(), s.presetDir)
 	if err != nil {
-		return 0, fmt.Errorf("не удалось загрузить пресеты с GitHub: %w", err)
+		return 0, i18n.Errorf("err.presetsGitHub", err)
 	}
 	return n, nil
 }
@@ -341,14 +340,49 @@ func (s *TvService) SaveTV(tv config.TV) error {
 	return err
 }
 
-func (s *TvService) SaveGeneral(offDelaySec, wakeTimeoutSec int, autostart bool) error {
+func (s *TvService) SaveGeneral(offDelaySec, wakeTimeoutSec int, autostart bool, lang string) error {
+	prev := s.store.Get().Language
 	err := s.store.Update(func(c *config.Config) {
 		c.OffDelaySec = max(0, offDelaySec)
 		c.WakeTimeoutSec = max(5, wakeTimeoutSec)
 		c.Autostart = autostart
+		c.Language = lang
 	})
 	s.applyAutostart(autostart)
+	if lang != prev {
+		s.applyLanguage(lang)
+	}
 	return err
+}
+
+// Language is the effective UI language code for the frontend.
+func (s *TvService) Language() string { return i18n.Get() }
+
+// applyLanguage switches the UI language live: tray menu, window titles,
+// and a "lang" event that makes every page re-render.
+func (s *TvService) applyLanguage(lang string) {
+	setLanguage(lang)
+	s.buildMenu()
+	s.mu.Lock()
+	if s.settings != nil {
+		s.settings.SetTitle(i18n.T("title.settings"))
+	}
+	for mac, w := range s.remotes {
+		if tv, ok := s.store.TV(mac); ok {
+			w.SetTitle(i18n.T("title.remote", tv.Name))
+		}
+	}
+	s.mu.Unlock()
+	s.app.Event.Emit("lang", i18n.Get())
+}
+
+func (s *TvService) buildMenu() {
+	menu := s.app.NewMenu()
+	menu.Add(i18n.T("menu.settings")).OnClick(func(*application.Context) { s.OpenSettings() })
+	menu.Add(i18n.T("menu.refresh")).OnClick(func(*application.Context) { s.ctrl.Refresh() })
+	menu.AddSeparator()
+	menu.Add(i18n.T("menu.quit")).OnClick(func(*application.Context) { s.app.Quit() })
+	s.tray.SetMenu(menu)
 }
 
 func (s *TvService) applyAutostart(on bool) {
@@ -397,6 +431,17 @@ type InstallDefaults struct {
 	Current string `json:"current"`
 }
 
+// Language is the installer UI language (system language by default).
+func (s *InstallerService) Language() string { return i18n.Get() }
+
+// SetLanguage switches the installer language (chosen in its window).
+func (s *InstallerService) SetLanguage(lang string) {
+	i18n.Set(lang)
+	if w, ok := s.app.Window.GetByName("installer"); ok {
+		w.SetTitle(i18n.T("title.installer"))
+	}
+}
+
 func (s *InstallerService) Defaults() InstallDefaults {
 	return InstallDefaults{Dir: platform.DefaultInstallDir(), Current: config.ExeDir()}
 }
@@ -405,18 +450,18 @@ func (s *InstallerService) Browse(current string) (string, error) {
 	return s.app.Dialog.OpenFile().
 		CanChooseDirectories(true).
 		CanChooseFiles(false).
-		SetTitle("Папка установки").
+		SetTitle(i18n.T("title.folder")).
 		SetDirectory(current).
 		PromptForSingleSelection()
 }
 
 // Install copies the app into dir, then starts the installed copy and quits.
-func (s *InstallerService) Install(dir string, autostart bool) error {
+func (s *InstallerService) Install(dir string, autostart bool, lang string) error {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
-		return errors.New("укажите папку")
+		return i18n.Errorf("err.noFolder")
 	}
-	if err := install.Run(dir, autostart); err != nil {
+	if err := install.Run(dir, autostart, lang); err != nil {
 		return err
 	}
 	if err := platform.StartDetached(install.Target(dir)); err != nil {
@@ -427,9 +472,9 @@ func (s *InstallerService) Install(dir string, autostart bool) error {
 }
 
 // Portable creates the ini next to the current exe and restarts in place.
-func (s *InstallerService) Portable(autostart bool) error {
+func (s *InstallerService) Portable(autostart bool, lang string) error {
 	st, _ := config.Load(config.PathIn(config.ExeDir()))
-	if err := st.Update(func(c *config.Config) { c.Autostart = autostart }); err != nil {
+	if err := st.Update(func(c *config.Config) { c.Autostart = autostart; c.Language = lang }); err != nil {
 		return err
 	}
 	self, _ := os.Executable()

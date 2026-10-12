@@ -4,12 +4,12 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"tvtray/internal/config"
+	"tvtray/internal/i18n"
 	"tvtray/internal/platform"
 	"tvtray/internal/samsung"
 )
@@ -64,7 +64,7 @@ func (c *Controller) remote(tv config.TV) *samsung.Remote {
 func (c *Controller) tv(mac string) (config.TV, error) {
 	tv, ok := c.store.TV(mac)
 	if !ok {
-		return tv, fmt.Errorf("ТВ %s не найден в настройках", mac)
+		return tv, i18n.Errorf("err.tvNotFound", mac)
 	}
 	return tv, nil
 }
@@ -240,7 +240,7 @@ func (c *Controller) TurnOn(mac string) error {
 		case <-ctx.Done():
 			if ctx.Err() == context.DeadlineExceeded {
 				c.log.Warn("tv did not wake", "tv", tv.Name)
-				return fmt.Errorf("%s не ответил на Wake-on-LAN", tv.Name)
+				return i18n.Errorf("err.noWake", tv.Name)
 			}
 			return nil
 		case <-t.C:

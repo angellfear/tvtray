@@ -18,6 +18,7 @@ import (
 
 	"tvtray/internal/config"
 	"tvtray/internal/controller"
+	"tvtray/internal/i18n"
 	"tvtray/internal/icon"
 	"tvtray/internal/install"
 	"tvtray/internal/platform"
@@ -62,17 +63,19 @@ func main() {
 // ---- installer mode --------------------------------------------------------
 
 func runInstaller() {
+	i18n.Set(platform.SystemLanguage())
 	svc := &InstallerService{}
 	app := application.New(application.Options{
 		Name:     "TvTray",
 		Icon:     icon.PNG(256, true),
 		Services: []application.Service{application.NewService(svc)},
 		Assets:   assets(),
+		Windows:  application.WindowsOptions{AdditionalBrowserArgs: devtoolsArgs(), WebviewUserDataPath: webviewDataPath()},
 	})
 	svc.app = app
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:                "installer",
-		Title:               "Установка TvTray",
+		Title:               i18n.T("title.installer"),
 		Width:               560,
 		Height:              360,
 		DisableResize:       true,
@@ -108,12 +111,31 @@ func instanceID() string {
 	return "tvtray.samsung.tray"
 }
 
+// webviewDataPath gives dev runs their own WebView2 profile: WebView2 refuses
+// to share a profile between processes started with different browser args.
+func webviewDataPath() string {
+	id := os.Getenv("TVTRAY_INSTANCE")
+	if id == "" && os.Getenv("TVTRAY_DEVTOOLS") == "" {
+		return "" // Wails default
+	}
+	dir, _ := os.UserCacheDir()
+	return filepath.Join(dir, "TvTray-dev", "WebView2-"+id)
+}
+
 // devtoolsArgs exposes WebView2 over CDP for debugging: TVTRAY_DEVTOOLS=9333.
 func devtoolsArgs() []string {
 	if port := os.Getenv("TVTRAY_DEVTOOLS"); port != "" {
 		return []string{"--remote-debugging-port=" + port}
 	}
 	return nil
+}
+
+// setLanguage applies the configured UI language ("" = system language).
+func setLanguage(lang string) {
+	if lang == "" {
+		lang = platform.SystemLanguage()
+	}
+	i18n.Set(lang)
 }
 
 func runApp() {
@@ -125,6 +147,7 @@ func runApp() {
 	if err != nil {
 		log.Error("config", "err", err)
 	}
+	setLanguage(store.Get().Language)
 	ctrl := controller.New(store, log)
 	svc := &TvService{store: store, ctrl: ctrl, log: log, remotes: map[string]*application.WebviewWindow{},
 		presetFS: builtinPresets, presetDir: filepath.Join(config.ExeDir(), "presets")}
@@ -140,7 +163,7 @@ func runApp() {
 			UniqueID:               instanceID(),
 			OnSecondInstanceLaunch: func(application.SecondInstanceData) { svc.OpenSettings() },
 		},
-		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true, AdditionalBrowserArgs: devtoolsArgs()},
+		Windows: application.WindowsOptions{DisableQuitOnLastWindowClosed: true, AdditionalBrowserArgs: devtoolsArgs(), WebviewUserDataPath: webviewDataPath()},
 		Linux:   application.LinuxOptions{DisableQuitOnLastWindowClosed: true},
 	})
 	svc.app = app
@@ -167,12 +190,7 @@ func runApp() {
 	svc.tray = tray
 	tray.SetIcon(icon.PNG(32, true))
 	tray.SetTooltip("TvTray")
-	menu := app.NewMenu()
-	menu.Add("Настройки…").OnClick(func(*application.Context) { svc.OpenSettings() })
-	menu.Add("Обновить состояние").OnClick(func(*application.Context) { ctrl.Refresh() })
-	menu.AddSeparator()
-	menu.Add("Выход").OnClick(func(*application.Context) { app.Quit() })
-	tray.SetMenu(menu)
+	svc.buildMenu()
 	tray.AttachWindow(svc.panel).WindowOffset(8)
 
 	ctrl.OnChange = svc.emitState

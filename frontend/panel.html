@@ -28,10 +28,13 @@
 <div id="list"></div>
 <div class="bar">
   <span class="small muted">TvTray</span>
-  <button class="icon" id="settings" title="Настройки">⚙</button>
+  <button class="icon" id="settings" data-i18n-title="panel.settings">⚙</button>
 </div>
 <script type="module">
 import { tv, Events, $, el, safe, throttle, powerIcon } from "/common.js";
+import { t as tr, initI18n } from "/i18n.js";
+
+await initI18n(() => tv("Language"));
 
 const list = $("#list");
 let dragging = false; // don't re-render while a slider is held
@@ -39,7 +42,7 @@ const volCache = {}; // last known volume per TV, shown until the TV answers
 
 function group(t) {
   const online = t.online;
-  const power = el("button", { class: "icon", title: online ? "Выключить" : "Включить",
+  const power = el("button", { class: "icon", title: tr(online ? "panel.turnOff" : "panel.turnOn"),
     onclick: () => safe(async () => { power.disabled = true; await tv("Power", t.mac); }) });
   power.innerHTML = powerIcon;
 
@@ -59,7 +62,7 @@ function group(t) {
   if (online && t.volumeMode === "upnp") {
     tv("Volume", t.mac).then(v => { volCache[t.mac] = v; if (!dragging) { vol.value = v; volVal.textContent = v; } }).catch(() => { volVal.textContent = "?"; });
   }
-  const mute = el("span", { class: "ico btn", title: "Без звука", onclick: () => safe(() => tv("Key", t.mac, "KEY_MUTE")) }, "🔊");
+  const mute = el("span", { class: "ico btn", title: tr("panel.mute"), onclick: () => safe(() => tv("Key", t.mac, "KEY_MUTE")) }, "🔊");
 
   // Backlight
   let blRow;
@@ -68,26 +71,26 @@ function group(t) {
     const bl = el("input", { type: "range", min: 0, max: t.backlightMax, value: t.backlight >= 0 ? t.backlight : Math.round(t.backlightMax / 2) });
     bl.addEventListener("input", () => { blVal.textContent = bl.value; });
     bl.addEventListener("change", () => safe(() => tv("SetBacklight", t.mac, +bl.value)));
-    blRow = el("div", { class: "ctl" }, el("span", { class: "ico", title: "Подсветка" }, "☀"), bl, blVal);
+    blRow = el("div", { class: "ctl" }, el("span", { class: "ico", title: tr("panel.backlight") }, "☀"), bl, blVal);
   } else {
-    blRow = el("div", { class: "hint" }, "Подсветка: ", el("a", { onclick: () => tv("OpenSettings") }, "настроить"));
+    blRow = el("div", { class: "hint" }, tr("panel.backlightSetup"), el("a", { onclick: () => tv("OpenSettings") }, tr("panel.setup")));
   }
 
   return el("section", { class: "tv" + (online ? "" : " offline") },
     el("header", {},
-      el("span", { class: "dot" + (online ? " on" : ""), title: online ? "Включён" : "Выключен" }),
+      el("span", { class: "dot" + (online ? " on" : ""), title: tr(online ? "status.on" : "status.off") }),
       el("span", { class: "name", title: t.model }, t.name || t.model),
       power),
     el("div", { class: "ctl" }, mute, vol, volVal),
     blRow,
     el("footer", {},
-      el("span", { class: "small muted" }, online ? "включён" : "выключен"),
-      el("button", { onclick: () => tv("OpenRemote", t.mac) }, "Пульт")));
+      el("span", { class: "small muted" }, tr(online ? "state.on" : "state.off")),
+      el("button", { onclick: () => tv("OpenRemote", t.mac) }, tr("panel.remote"))));
 }
 
 function render(tvs) {
   list.replaceChildren(...(tvs.length ? tvs.map(group)
-    : [el("div", { class: "empty" }, "Нет телевизоров для панели.", el("br"), el("a", { style: "color:var(--accent);cursor:pointer", onclick: () => tv("OpenSettings") }, "Открыть настройки"))]));
+    : [el("div", { class: "empty" }, tr("panel.empty"), el("br"), el("a", { style: "color:var(--accent);cursor:pointer", onclick: () => tv("OpenSettings") }, tr("panel.openSettings")))]));
   requestAnimationFrame(() => tv("ResizePanel", Math.ceil(document.documentElement.scrollHeight)));
 }
 

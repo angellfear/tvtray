@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>TvTray — настройки</title>
+<title>TvTray</title>
 <link rel="stylesheet" href="/style.css">
 <style>
   body { padding: 16px 20px 40px; }
@@ -28,35 +28,41 @@
 </head>
 <body>
 
-<h2>Телевизоры</h2>
+<h2 data-i18n="set.tvs"></h2>
 <div class="card">
   <div class="row">
-    <button class="primary" id="scan">Сканировать сеть</button>
-    <span class="muted small" id="scanStatus">Найдёт все Samsung Tizen ТВ в локальной сети (они должны быть включены).</span>
+    <button class="primary" id="scan" data-i18n="set.scan"></button>
+    <span class="muted small" id="scanStatus" data-i18n="set.scanHint"></span>
   </div>
   <div id="scanResults"></div>
 </div>
 <div id="tvs"></div>
 
-<h2>Общие</h2>
+<h2 data-i18n="gen.title"></h2>
 <div class="card form">
-  <span>Задержка выключения ТВ, с</span>
-  <span class="row"><input type="number" id="offDelay" min="0" max="600"><span class="help">после того как Windows погасит дисплей</span></span>
-  <span>Ждать включения ТВ, с</span>
-  <span class="row"><input type="number" id="wakeTimeout" min="5" max="300"><span class="help">сколько слать Wake-on-LAN при пробуждении</span></span>
-  <span>Автозапуск</span>
-  <label class="check"><input type="checkbox" id="autostart"> Запускать вместе с Windows</label>
-  <span>Версия</span>
+  <span data-i18n="gen.language"></span>
+  <select id="language" style="width: 200px"></select>
+  <span data-i18n="gen.offDelay"></span>
+  <span class="row"><input type="number" id="offDelay" min="0" max="600"><span class="help" data-i18n="gen.offDelayHelp"></span></span>
+  <span data-i18n="gen.wake"></span>
+  <span class="row"><input type="number" id="wakeTimeout" min="5" max="300"><span class="help" data-i18n="gen.wakeHelp"></span></span>
+  <span data-i18n="gen.autostart"></span>
+  <label class="check"><input type="checkbox" id="autostart"> <span data-i18n="gen.autostartLabel"></span></label>
+  <span data-i18n="gen.version"></span>
   <span><span id="version"></span> · <a href="#" id="repo" style="color:var(--accent)">GitHub</a></span>
-  <span>Файл настроек</span>
+  <span data-i18n="gen.ini"></span>
   <code id="ini"></code>
   <span></span>
-  <div class="actions"><button class="danger" id="uninstall">Удалить TvTray…</button><button id="quit">Выйти из TvTray</button></div>
+  <div class="actions"><button class="danger" id="uninstall" data-i18n="gen.uninstall"></button><button id="quit" data-i18n="gen.quit"></button></div>
 </div>
 
 <script type="module">
 import { tv, Events, $, el, safe, toast, debounce } from "/common.js";
 import { keySeqField } from "/keyseq.js";
+import { t as tr, initI18n, LANGUAGES } from "/i18n.js";
+
+await initI18n(() => tv("Language"));
+document.title = tr("set.title");
 
 let state = null;
 
@@ -80,60 +86,58 @@ function tvCard(t, online) {
 
   const card = el("div", { class: "card" },
     el("div", { class: "tv-head" },
-      el("span", { class: "dot" + (online ? " on" : ""), title: online ? "Включён" : "Выключен / не в сети" }),
+      el("span", { class: "dot" + (online ? " on" : ""), title: tr(online ? "status.on" : "status.offline") }),
       text(() => t.name, v => t.name = v),
       el("button", { class: "danger", onclick: () => safe(async () => {
-        if (!confirm(`Удалить «${t.name}» из списка?`)) return;
+        if (!confirm(tr("set.removeConfirm", { name: t.name }))) return;
         await tv("RemoveTV", t.mac); load();
-      }) }, "Удалить")),
+      }) }, tr("set.remove"))),
     el("div", { class: "meta" }, `${t.model} · IP ${t.ip} · MAC ${t.mac}`),
 
     el("div", { class: "form" },
-      el("span", {}, "Питание"),
-      check("Выключать и включать вместе с дисплеем ПК", () => t.linkPower, v => t.linkPower = v),
-      el("span", {}, "Панель в трее"),
-      check("Показывать по левому клику", () => t.showInPanel, v => t.showInPanel = v),
-      el("span", {}, "Громкость"),
+      el("span", {}, tr("set.power")),
+      check(tr("set.linkPower"), () => t.linkPower, v => t.linkPower = v),
+      el("span", {}, tr("set.panel")),
+      check(tr("set.showInPanel"), () => t.showInPanel, v => t.showInPanel = v),
+      el("span", {}, tr("set.volume")),
       bind(el("select", {},
-        el("option", { value: "upnp" }, "UPnP — точное значение (рекомендуется)"),
-        el("option", { value: "keys" }, "Кнопки пульта VOL+/VOL−")),
+        el("option", { value: "upnp" }, tr("set.volUpnp")),
+        el("option", { value: "keys" }, tr("set.volKeys"))),
         i => i.value = t.volumeMode, i => t.volumeMode = i.value),
     ),
 
     el("details", { open: !b.enabled ? false : undefined },
-      el("summary", {}, "Подсветка (макрос пульта)"),
-      el("p", { class: "help" },
-        "Приложение открывает меню ТВ кнопками «Открыть», затем жмёт ◀/▶ на разницу между текущим и нужным значением и закрывает меню. ",
-        "Подберите «Открыть» так, чтобы после неё на экране был активен ползунок подсветки — проверьте кнопкой «Тест»."),
+      el("summary", {}, tr("bl.title")),
+      el("p", { class: "help" }, tr("bl.help")),
       el("div", { class: "form" },
-        el("span", {}, "Пресет"),
+        el("span", {}, tr("bl.preset")),
         presetRow(t),
-        el("span", {}, "Включить"),
-        check("Показывать ползунок подсветки в панели", () => b.enabled, v => b.enabled = v),
-        el("span", {}, "Кнопки «Открыть»"),
+        el("span", {}, tr("bl.enable")),
+        check(tr("bl.showSlider"), () => b.enabled, v => b.enabled = v),
+        el("span", {}, tr("bl.open")),
         keySeqField({ mac: t.mac, get: () => b.openKeys || [], set: k => { b.openKeys = k; save(); } }),
-        el("span", {}, "Кнопки «Закрыть»"),
+        el("span", {}, tr("bl.close")),
         keySeqField({ mac: t.mac, get: () => b.closeKeys || [], set: k => { b.closeKeys = k; save(); } }),
-        el("span", {}, "Максимум шкалы"),
+        el("span", {}, tr("bl.max")),
         number(() => b.max, v => b.max = v, 1, 100),
-        el("span", {}, "Пауза после пунктов меню, мс"),
+        el("span", {}, tr("bl.navDelay")),
         number(() => b.navDelayMs, v => b.navDelayMs = v, 100, 5000),
-        el("span", {}, "Пауза между ◀/▶, мс"),
+        el("span", {}, tr("bl.stepDelay")),
         number(() => b.stepDelayMs, v => b.stepDelayMs = v, 30, 2000),
-        el("span", {}, "Текущее значение на ТВ"),
-        el("span", { class: "row" }, blCurrent, el("span", { class: "help" }, "−1 = неизвестно (при следующей установке сначала уйдёт в 0)")),
-        el("span", {}, "Проверка"),
+        el("span", {}, tr("bl.current")),
+        el("span", { class: "row" }, blCurrent, el("span", { class: "help" }, tr("bl.currentHelp"))),
+        el("span", {}, tr("bl.check")),
         el("div", { class: "actions" },
-          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, keysText(b.openKeys))) }, "Тест: открыть"),
+          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, keysText(b.openKeys))) }, tr("bl.testOpen")),
           el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, "KEY_LEFT")) }, "◀"),
           el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, "KEY_RIGHT")) }, "▶"),
-          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, keysText(b.closeKeys))) }, "Тест: закрыть"),
+          el("button", { onclick: () => safe(() => tv("TestKeys", t.mac, keysText(b.closeKeys))) }, tr("bl.testClose")),
           el("button", { onclick: () => safe(async () => {
-            const v = prompt(`Выставить подсветку (0–${b.max}) с синхронизацией через ноль:`, Math.max(0, b.current));
+            const v = prompt(tr("bl.syncPrompt", { max: b.max }), Math.max(0, b.current));
             if (v === null) return;
             await tv("SyncBacklight", t.mac, num(v, 0));
-            toast("Макрос отправлен");
-          }) }, "Синхронизировать…"),
+            toast(tr("bl.sent"));
+          }) }, tr("bl.sync")),
         ),
       ),
     ),
@@ -149,26 +153,26 @@ function presetRow(t) {
     const list = await tv("Presets", t.mac);
     const match = list.find(p => p.match);
     select.replaceChildren(
-      el("option", { value: "" }, list.length ? "— выберите пресет —" : "— пресетов нет, обновите с GitHub —"),
+      el("option", { value: "" }, tr(list.length ? "bl.choose" : "bl.none")),
       ...list.map(p => el("option", { value: p.id, title: [...(p.models || []), p.pattern].filter(Boolean).join(", ") },
-        p.name + (p.match ? "  ✓ для " + t.model : ""))));
+        p.name + (p.match ? "  " + tr("bl.forModel", { model: t.model }) : ""))));
     if (match) select.value = match.id;
-    status.textContent = match ? "" : "для " + t.model + " пресета нет";
+    status.textContent = match ? "" : tr("bl.noMatch", { model: t.model });
   };
   const apply = el("button", { onclick: () => safe(async () => {
     if (!select.value) return;
     await tv("ApplyPreset", t.mac, select.value);
-    toast("Пресет применён");
+    toast(tr("bl.applied"));
     await load();
-  }) }, "Применить");
-  const update = el("button", { title: "Загрузить свежие пресеты из репозитория на GitHub", onclick: () => safe(async () => {
+  }) }, tr("bl.apply"));
+  const update = el("button", { title: tr("bl.updateTitle"), onclick: () => safe(async () => {
     update.disabled = true;
     try {
       const n = await tv("UpdatePresets");
-      toast("Загружено пресетов: " + n);
+      toast(tr("bl.downloaded", { n }));
       await fill();
     } finally { update.disabled = false; }
-  }) }, "Обновить с GitHub");
+  }) }, tr("bl.update"));
   safe(fill);
   return el("div", { class: "row", style: "flex-wrap: wrap" }, select, apply, update, status);
 }
@@ -176,7 +180,7 @@ function presetRow(t) {
 function renderTVs() {
   const list = state.config.tvs || [];
   $("#tvs").replaceChildren(...(list.length ? list.map(t => tvCard(t, state.online[t.mac]))
-    : [el("div", { class: "card muted" }, "Телевизоры не добавлены. Нажмите «Сканировать сеть».")]));
+    : [el("div", { class: "card muted" }, tr("set.noTVs"))]));
 }
 
 async function load() {
@@ -185,36 +189,39 @@ async function load() {
   $("#offDelay").value = c.offDelaySec;
   $("#wakeTimeout").value = c.wakeTimeoutSec;
   $("#autostart").checked = c.autostart;
+  $("#language").value = c.language || "";
   $("#ini").textContent = state.iniPath;
   $("#version").textContent = state.version;
   renderTVs();
 }
 
 const saveGeneral = debounce(() => safe(() =>
-  tv("SaveGeneral", num($("#offDelay").value, 5), num($("#wakeTimeout").value, 40), $("#autostart").checked)), 400);
+  tv("SaveGeneral", num($("#offDelay").value, 5), num($("#wakeTimeout").value, 40), $("#autostart").checked, $("#language").value)), 400);
 ["#offDelay", "#wakeTimeout"].forEach(s => $(s).addEventListener("input", saveGeneral));
 $("#autostart").addEventListener("change", saveGeneral);
+$("#language").replaceChildren(el("option", { value: "" }, tr("gen.system")), ...LANGUAGES.map(l => el("option", { value: l.code }, l.name)));
+$("#language").addEventListener("change", saveGeneral);
 
 $("#scan").onclick = () => safe(async () => {
   $("#scan").disabled = true;
-  $("#scanStatus").textContent = "Сканирую…";
+  $("#scanStatus").textContent = tr("set.scanning");
   try {
     const found = await tv("Scan");
-    $("#scanStatus").textContent = found.length ? `Найдено: ${found.length}` : "Ничего не найдено. ТВ должен быть включён и в той же сети.";
+    $("#scanStatus").textContent = found.length ? tr("set.found", { n: found.length }) : tr("set.notFound");
     $("#scanResults").replaceChildren(found.length ? el("table", {},
-      el("tr", {}, el("th", {}, "Имя"), el("th", {}, "Модель"), el("th", {}, "IP"), el("th", {}, "MAC"), el("th", {}, "Сеть"), el("th", {})),
+      el("tr", {}, el("th", {}, tr("set.col.name")), el("th", {}, tr("set.col.model")), el("th", {}, "IP"), el("th", {}, "MAC"), el("th", {}, tr("set.col.net")), el("th", {})),
       found.map(f => el("tr", {},
         el("td", {}, f.name), el("td", {}, f.model), el("td", {}, f.ip), el("td", {}, el("code", {}, f.mac)),
-        el("td", {}, f.net === "wireless" ? "Wi-Fi" : "кабель"),
-        el("td", {}, f.added ? el("span", { class: "muted small" }, "добавлен")
-          : el("button", { onclick: e => safe(async () => { e.target.disabled = true; await tv("AddTV", f); f.added = true; e.target.replaceWith(el("span", { class: "muted small" }, "добавлен")); await load(); }) }, "Добавить"))))) : "");
+        el("td", {}, f.net === "wireless" ? "Wi-Fi" : tr("set.cable")),
+        el("td", {}, f.added ? el("span", { class: "muted small" }, tr("set.added"))
+          : el("button", { onclick: e => safe(async () => { e.target.disabled = true; await tv("AddTV", f); f.added = true; e.target.replaceWith(el("span", { class: "muted small" }, tr("set.added"))); await load(); }) }, tr("set.add")))))) : "");
   } finally {
     $("#scan").disabled = false;
   }
 });
 
 $("#uninstall").onclick = () => safe(async () => {
-  if (!confirm("Удалить TvTray? Будут удалены автозапуск, ярлык и папка программы вместе с настройками.")) return;
+  if (!confirm(tr("gen.uninstallConfirm"))) return;
   await tv("Uninstall");
 });
 $("#quit").onclick = () => tv("Quit");

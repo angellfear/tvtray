@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"tvtray/internal/config"
+	"tvtray/internal/i18n"
 	"tvtray/internal/platform"
 )
 
@@ -30,7 +31,7 @@ func Target(dir string) string { return filepath.Join(dir, ExeName()) }
 
 // Files does the file-system part: copy exe, create ini, open the folder for
 // writing by users. Needs admin rights for Program Files.
-func Files(dir string, autostart bool) error {
+func Files(dir string, autostart bool, lang string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -48,22 +49,19 @@ func Files(dir string, autostart bool) error {
 	ini := config.PathIn(dir)
 	if _, err := os.Stat(ini); err != nil {
 		st, _ := config.Load(ini)
-		st.Update(func(c *config.Config) { c.Autostart = autostart })
+		st.Update(func(c *config.Config) { c.Autostart = autostart; c.Language = lang })
 	}
 	return platform.GrantUsersWrite(dir)
 }
 
 // Run installs into dir, elevating through UAC when the folder isn't
 // writable, then adds the Start menu shortcut for the current user.
-func Run(dir string, autostart bool) error {
+func Run(dir string, autostart bool, lang string) error {
 	dir = filepath.Clean(dir)
-	err := Files(dir, autostart)
+	err := Files(dir, autostart, lang)
 	if err != nil && platform.IsAccessDenied(err) {
 		self, _ := os.Executable()
-		args := []string{ElevatedFlag, dir}
-		if autostart {
-			args = append(args, "--autostart")
-		}
+		args := []string{ElevatedFlag, dir, fmt.Sprint(autostart), lang}
 		code, eerr := platform.RunElevated(self, args...)
 		switch {
 		case eerr != nil:
@@ -73,7 +71,7 @@ func Run(dir string, autostart bool) error {
 			if len(msg) > 0 {
 				return fmt.Errorf("%s", strings.TrimSpace(string(msg)))
 			}
-			return fmt.Errorf("установка с правами администратора завершилась с кодом %d", code)
+			return i18n.Errorf("err.elevatedCode", code)
 		}
 		err = nil
 	}
@@ -81,7 +79,7 @@ func Run(dir string, autostart bool) error {
 		return err
 	}
 	if err := platform.CreateShortcut(Target(dir)); err != nil {
-		return fmt.Errorf("программа установлена, но ярлык в «Пуске» не создан: %w", err)
+		return i18n.Errorf("err.shortcut", err)
 	}
 	return nil
 }
@@ -92,9 +90,13 @@ func RunElevatedPart(args []string) int {
 		return 2
 	}
 	dir := args[0]
-	autostart := len(args) > 1 && args[1] == "--autostart"
+	autostart := len(args) > 1 && args[1] == "true"
+	lang := ""
+	if len(args) > 2 {
+		lang = args[2]
+	}
 	os.Remove(errorFile(dir))
-	if err := Files(dir, autostart); err != nil {
+	if err := Files(dir, autostart, lang); err != nil {
 		// The unelevated parent can't see our stderr; leave the reason in a file.
 		os.WriteFile(errorFile(dir), []byte(err.Error()), 0o644)
 		return 1
