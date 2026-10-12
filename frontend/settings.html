@@ -104,6 +104,8 @@ function tvCard(t, online) {
         "Приложение открывает меню ТВ кнопками «Открыть», затем жмёт ◀/▶ на разницу между текущим и нужным значением и закрывает меню. ",
         "Подберите «Открыть» так, чтобы после неё на экране был активен ползунок подсветки — проверьте кнопкой «Тест»."),
       el("div", { class: "form" },
+        el("span", {}, "Пресет"),
+        presetRow(t),
         el("span", {}, "Включить"),
         check("Показывать ползунок подсветки в панели", () => b.enabled, v => b.enabled = v),
         el("span", {}, "Кнопки «Открыть»"),
@@ -135,6 +137,38 @@ function tvCard(t, online) {
     ),
   );
   return card;
+}
+
+// Preset picker: matching preset is preselected; GitHub refresh reloads the list.
+function presetRow(t) {
+  const select = el("select", { class: "grow" });
+  const status = el("span", { class: "help" });
+  const fill = async () => {
+    const list = await tv("Presets", t.mac);
+    const match = list.find(p => p.match);
+    select.replaceChildren(
+      el("option", { value: "" }, list.length ? "— выберите пресет —" : "— пресетов нет, обновите с GitHub —"),
+      ...list.map(p => el("option", { value: p.id, title: [...(p.models || []), p.pattern].filter(Boolean).join(", ") },
+        p.name + (p.match ? "  ✓ для " + t.model : ""))));
+    if (match) select.value = match.id;
+    status.textContent = match ? "" : "для " + t.model + " пресета нет";
+  };
+  const apply = el("button", { onclick: () => safe(async () => {
+    if (!select.value) return;
+    await tv("ApplyPreset", t.mac, select.value);
+    toast("Пресет применён");
+    await load();
+  }) }, "Применить");
+  const update = el("button", { title: "Загрузить свежие пресеты из репозитория на GitHub", onclick: () => safe(async () => {
+    update.disabled = true;
+    try {
+      const n = await tv("UpdatePresets");
+      toast("Загружено пресетов: " + n);
+      await fill();
+    } finally { update.disabled = false; }
+  }) }, "Обновить с GitHub");
+  safe(fill);
+  return el("div", { class: "row", style: "flex-wrap: wrap" }, select, apply, update, status);
 }
 
 function renderTVs() {

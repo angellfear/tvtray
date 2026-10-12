@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"tvtray/internal/controller"
 	"tvtray/internal/install"
 	"tvtray/internal/platform"
+	"tvtray/internal/presets"
 	"tvtray/internal/samsung"
 )
 
@@ -29,6 +32,9 @@ type TvService struct {
 	log   *slog.Logger
 	tray  *application.SystemTray
 	panel *application.WebviewWindow
+
+	presetFS  fs.FS  // built-in presets (embedded)
+	presetDir string // downloaded presets
 
 	mu       sync.Mutex
 	settings *application.WebviewWindow
@@ -232,11 +238,80 @@ func (s *TvService) AddTV(item ScanItem) error {
 				return
 			}
 		}
-		c.TVs = append(c.TVs, config.NewTV(mac, item.IP, item.Name, item.Model))
+		tv := config.NewTV(mac, item.IP, item.Name, item.Model)
+		if p := presets.Match(s.presetList(), item.Model); p != nil {
+			applyPreset(tv, p)
+			s.log.Info("preset applied", "tv", tv.Name, "preset", p.ID)
+		}
+		c.TVs = append(c.TVs, tv)
 	})
 	s.ctrl.Refresh()
 	s.emitState()
 	return err
+}
+
+// ---- presets ---------------------------------------------------------------
+
+type PresetInfo struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Models  []string `json:"models"`
+	Pattern string   `json:"pattern"`
+	Match   bool     `json:"match"` // best match for the TV's model
+}
+
+func (s *TvService) presetList() []presets.Preset { return presets.Load(s.presetFS, s.presetDir) }
+
+func applyPreset(tv *config.TV, p *presets.Preset) {
+	b := p.Backlight
+	tv.Backlight.Enabled = true
+	tv.Backlight.OpenKeys = append([]string(nil), b.OpenKeys...)
+	tv.Backlight.CloseKeys = append([]string(nil), b.CloseKeys...)
+	tv.Backlight.Max = b.Max
+	if b.NavDelayMs > 0 {
+		tv.Backlight.NavDelayMs = b.NavDelayMs
+	}
+	if b.StepDelayMs > 0 {
+		tv.Backlight.StepDelayMs = b.StepDelayMs
+	}
+	if tv.Backlight.Current > b.Max {
+		tv.Backlight.Current = -1
+	}
+}
+
+// Presets lists all presets, marking the one that matches the TV's model.
+func (s *TvService) Presets(mac string) []PresetInfo {
+	list := s.presetList()
+	var best *presets.Preset
+	if tv, ok := s.store.TV(mac); ok {
+		best = presets.Match(list, tv.Model)
+	}
+	out := []PresetInfo{}
+	for _, p := range list {
+		out = append(out, PresetInfo{ID: p.ID, Name: p.Name, Models: p.Models, Pattern: p.ModelPattern,
+			Match: best != nil && best.ID == p.ID})
+	}
+	return out
+}
+
+func (s *TvService) ApplyPreset(mac, id string) error {
+	for _, p := range s.presetList() {
+		if p.ID == id {
+			err := s.store.UpdateTV(mac, func(t *config.TV) { applyPreset(t, &p) })
+			s.emitState()
+			return err
+		}
+	}
+	return errors.New("пресет не найден")
+}
+
+// UpdatePresets downloads the presets folder from GitHub.
+func (s *TvService) UpdatePresets() (int, error) {
+	n, err := presets.Download(context.Background(), s.presetDir)
+	if err != nil {
+		return 0, fmt.Errorf("не удалось загрузить пресеты с GitHub: %w", err)
+	}
+	return n, nil
 }
 
 func (s *TvService) RemoveTV(mac string) error {

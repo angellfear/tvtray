@@ -1,0 +1,13 @@
+{
+  "id": "samsung-2016-ku",
+  "name": "Samsung 2016 KU (Tizen 2.4)",
+  "models": ["UE49KU6470"],
+  "modelPattern": "^(UE|UN|UA)\\d{2}KU\\d",
+  "backlight": {
+    "openKeys": ["KEY_MENU", "KEY_ENTER", "KEY_DOWN", "KEY_DOWN", "KEY_DOWN", "KEY_DOWN", "KEY_ENTER", "KEY_ENTER"],
+    "closeKeys": ["KEY_EXIT"],
+    "max": 20,
+    "navDelayMs": 340,
+    "stepDelayMs": 100
+  }
+}

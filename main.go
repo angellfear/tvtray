@@ -27,6 +27,11 @@ import (
 //go:embed frontend
 var embedded embed.FS
 
+// Built-in presets; newer ones are downloaded next to the exe (presets\).
+//
+//go:embed presets/*.json
+var builtinPresets embed.FS
+
 func assets() application.AssetOptions {
 	sub, _ := fs.Sub(embedded, "frontend")
 	return application.AssetOptions{Handler: application.BundledAssetFileServer(sub)}
@@ -110,7 +115,8 @@ func runApp() {
 		log.Error("config", "err", err)
 	}
 	ctrl := controller.New(store, log)
-	svc := &TvService{store: store, ctrl: ctrl, log: log, remotes: map[string]*application.WebviewWindow{}}
+	svc := &TvService{store: store, ctrl: ctrl, log: log, remotes: map[string]*application.WebviewWindow{},
+		presetFS: builtinPresets, presetDir: filepath.Join(config.ExeDir(), "presets")}
 
 	app := application.New(application.Options{
 		Name:     "TvTray",
