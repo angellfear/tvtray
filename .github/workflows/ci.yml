@@ -30,7 +30,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
       - run: go vet -tags gtk3 ./...
       - run: sh build.sh 0.0.0-ci
-      - uses: actions/upload-artifact@v4
+      - name: Smoke test (starts under Xvfb with a D-Bus session)
+        run: |
+          sudo apt-get install -y xvfb dbus-x11
+          mkdir smoke && cp build/tvtray smoke/
+          printf "[general]\nautostart = false\n" > smoke/TvTray.ini
+          cd smoke
+          dbus-run-session -- xvfb-run -a timeout 15 ./tvtray || true
+          cat TvTray.log
+          grep -q "msg=started" TvTray.log
+      - uses: actions/upload-artifact@v5
         with:
           name: tvtray-linux-amd64
           path: build/tvtray

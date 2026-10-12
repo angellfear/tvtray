@@ -29,7 +29,7 @@ jobs:
       - name: Build
         shell: pwsh
         run: ./build.ps1 -Version $env:VERSION.TrimStart("v")
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows
           path: build/TvTray.exe
@@ -48,7 +48,7 @@ jobs:
         run: |
           sh build.sh "${VERSION#v}"
           tar -C build -czf build/tvtray-linux-amd64.tar.gz tvtray
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux
           path: build/tvtray-linux-amd64.tar.gz
