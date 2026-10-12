@@ -1,6 +1,6 @@
 name: Release
 
-# Builds TvTray.exe and publishes it as a GitHub release.
+# Builds TvTray for Windows and Linux and publishes a GitHub release.
 # Trigger: push a tag like v1.2.3, or run manually with a version.
 on:
   push:
@@ -14,43 +14,78 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1 -Version $env:VERSION.TrimStart("v")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/TvTray.exe
+
+  linux:
+    runs-on: ubuntu-22.04 # oldest supported glibc for wider compatibility
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      - run: go vet -tags gtk3 ./...
+      - name: Build
+        run: |
+          sh build.sh "${VERSION#v}"
+          tar -C build -czf build/tvtray-linux-amd64.tar.gz tvtray
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: build/tvtray-linux-amd64.tar.gz
+
+  release:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-go@v6
+      - uses: actions/download-artifact@v5
         with:
-          go-version-file: go.mod
-
-      - name: Version
-        id: ver
-        shell: pwsh
-        run: |
-          $v = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.version }}" } else { "${{ github.ref_name }}".TrimStart("v") }
-          if ($v -notmatch '^\d+\.\d+\.\d+([-+].*)?$') { throw "Bad version: $v" }
-          "version=$v" >> $env:GITHUB_OUTPUT
-
-      - name: Test
-        run: go vet ./...
-
-      - name: Build
-        shell: pwsh
-        run: ./build.ps1 -Version ${{ steps.ver.outputs.version }}
-
-      - name: Release
-        shell: pwsh
+          path: dist
+          merge-multiple: true
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v${{ steps.ver.outputs.version }}"
-          $prev = git describe --tags --abbrev=0 "$tag^" 2>$null
-          $range = if ($prev) { "$prev..$tag" } else { $tag }
-          if (-not (git rev-parse -q --verify "refs/tags/$tag")) { $range = if ($prev) { "$prev..HEAD" } else { "HEAD" } }
-          $notes = (git log --no-merges --format="- %s" $range) -join "`n"
-          $hash = (Get-FileHash build/TvTray.exe -Algorithm SHA256).Hash.ToLower()
-          $body = "## Изменения`n$notes`n`n## Установка`nСкачайте **TvTray.exe** и запустите — он предложит установиться в Program Files или работать без установки.`n`nSHA-256: ``$hash``"
-          gh release create $tag build/TvTray.exe --title "TvTray $tag" --notes $body --target $env:GITHUB_SHA
+          v="${VERSION#v}"
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$' || { echo "Bad version: $v"; exit 1; }
+          tag="v$v"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then end="$tag"; else end=HEAD; fi
+          prev=$(git describe --tags --abbrev=0 "$end^" 2>/dev/null || true)
+          range="${prev:+$prev..}$end"
+          {
+            echo "## Изменения"
+            git log --no-merges --format='- %s' "$range"
+            echo
+            echo "## Установка"
+            echo "**Windows:** скачайте \`TvTray.exe\` и запустите — он предложит установиться или работать без установки."
+            echo
+            echo "**Linux:** нужны GTK 3 и WebKit2GTK 4.1 (\`sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0\`). Распакуйте \`tvtray-linux-amd64.tar.gz\` и запустите \`./tvtray\`. Для иконки в трее в GNOME нужно расширение AppIndicator."
+            echo
+            echo "## SHA-256"
+            echo '```'
+            (cd dist && sha256sum *)
+            echo '```'
+          } > notes.md
+          gh release create "$tag" dist/* --title "TvTray $tag" --notes-file notes.md --target "$GITHUB_SHA"

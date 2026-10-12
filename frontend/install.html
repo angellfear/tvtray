@@ -56,7 +56,10 @@ const run = async fn => {
 
 $("#browse").onclick = async () => {
   const p = await installer("Browse", $("#dir").value).catch(() => "");
-  if (p) $("#dir").value = p.replace(/[\\/]TvTray$/i, "") + "\\TvTray";
+  if (p) {
+    const sep = p.includes("/") ? "/" : "\\";
+    $("#dir").value = p.replace(/[\\/]tvtray$/i, "") + sep + (sep === "/" ? "tvtray" : "TvTray");
+  }
 };
 $("#install").onclick = () => run(() => installer("Install", $("#dir").value, $("#autostart").checked, getLang()));
 $("#portable").onclick = () => run(() => installer("Portable", $("#autostart").checked, getLang()));

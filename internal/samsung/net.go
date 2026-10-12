@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -96,21 +97,29 @@ func WakeOnLAN(mac string) error {
 	for _, n := range localNets() {
 		targets = append(targets, broadcastAddr(n).String())
 	}
+	// Linux refuses broadcast destinations unless SO_BROADCAST is set.
+	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
+		var serr error
+		if err := c.Control(func(fd uintptr) { serr = setBroadcast(fd) }); err != nil {
+			return err
+		}
+		return serr
+	}}
+	pc, err := lc.ListenPacket(context.Background(), "udp4", ":0")
+	if err != nil {
+		return err
+	}
+	defer pc.Close()
+
 	var lastErr error
 	sent := false
 	for _, t := range targets {
-		for _, port := range []string{"9", "7"} {
-			c, err := net.Dial("udp4", net.JoinHostPort(t, port))
-			if err != nil {
-				lastErr = err
-				continue
-			}
-			if _, err := c.Write(pkt); err != nil {
+		for _, port := range []int{9, 7} {
+			if _, err := pc.WriteTo(pkt, &net.UDPAddr{IP: net.ParseIP(t), Port: port}); err != nil {
 				lastErr = err
 			} else {
 				sent = true
 			}
-			c.Close()
 		}
 	}
 	if !sent {

@@ -2,6 +2,11 @@
 // Porting to another OS means implementing WatchPower for it.
 package platform
 
+import "log/slog"
+
+// Logger receives diagnostics from the platform watchers (set by main).
+var Logger = slog.Default()
+
 // PowerEvent is a display or system power transition.
 type PowerEvent int
 

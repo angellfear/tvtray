@@ -1,0 +1,36 @@
+name: CI
+
+# Vets and builds for Windows and Linux on every push and pull request.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1 -Version 0.0.0-ci
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      - run: go vet -tags gtk3 ./...
+      - run: sh build.sh 0.0.0-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tvtray-linux-amd64
+          path: build/tvtray

@@ -147,6 +147,7 @@ func runApp() {
 	if err != nil {
 		log.Error("config", "err", err)
 	}
+	platform.Logger = log
 	setLanguage(store.Get().Language)
 	ctrl := controller.New(store, log)
 	svc := &TvService{store: store, ctrl: ctrl, log: log, remotes: map[string]*application.WebviewWindow{},
