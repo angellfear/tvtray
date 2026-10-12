@@ -51,13 +51,19 @@
 
 ## Сборка
 
-Нужны Go 1.26+ и GCC (MinGW) для CGO.
+Нужен Go 1.26+.
 
 ```powershell
-.\build.ps1
+.\build.ps1 -Version 1.2.3   # Windows: build\TvTray.exe (CGO не требуется)
 ```
 
-Результат: `build\TvTray.exe`. Диагностика из консоли: `go run . --scan`.
+```sh
+sh build.sh 1.2.3            # Linux: build/tvtray (нужны libgtk-3-dev и libwebkit2gtk-4.1-dev)
+```
+
+Диагностика из консоли: `go run . --scan`. Отладка рядом с установленной копией: `TVTRAY_INSTANCE=dev` (отдельный экземпляр) и `TVTRAY_DEVTOOLS=9333` (DevTools WebView2).
+
+**Релиз:** `git tag v1.2.3 && git push origin v1.2.3` — GitHub Actions соберёт Windows- и Linux-версии и опубликует релиз (или Actions → Release → Run workflow).
 
 Код на Wails v3 (WebView2 на Windows, WebKitGTK на Linux); всё ОС-зависимое — в `internal/platform`.
 
