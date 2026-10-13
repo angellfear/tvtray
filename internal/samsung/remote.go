@@ -117,13 +117,19 @@ func (r *Remote) dialLocked(ctx context.Context, secure bool) error {
 	}
 	// The TV answers with ms.channel.connect once the client is accepted;
 	// a new client on a secure TV waits for "Allow" on screen (up to 30 s).
-	rctx, rcancel := context.WithTimeout(ctx, 35*time.Second)
+	// Pairing must outlive the caller's short command timeout: if we hung up
+	// early the prompt would stay on screen and the "Allow" would be lost.
+	hctx := ctx
+	if secure && r.Token == "" {
+		hctx = context.Background()
+	}
+	rctx, rcancel := context.WithTimeout(hctx, 35*time.Second)
 	defer rcancel()
 	for {
 		_, msg, err := c.Read(rctx)
 		if err != nil {
 			c.Close(websocket.StatusNormalClosure, "")
-			if secure {
+			if secure && r.Token == "" {
 				// The pairing prompt was ignored or denied: the TV just closes.
 				return i18n.Errorf("err.unauthorized")
 			}
@@ -207,7 +213,9 @@ func (r *Remote) sendLocked(ctx context.Context, key string, allowRetry bool) er
 		if err := r.connectLocked(ctx); err != nil {
 			return err
 		}
-		wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		// Own deadline: the caller's may have run out while the user was
+		// confirming the pairing prompt on the TV.
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		err := r.conn.Write(wctx, websocket.MessageText, keyMessage(key))
 		cancel()
 		if err == nil {

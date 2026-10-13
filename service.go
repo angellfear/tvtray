@@ -337,7 +337,12 @@ func (s *TvService) SaveTV(tv config.TV) error {
 	if tv.VolumeMode != config.VolumeKeys {
 		tv.VolumeMode = config.VolumeUPnP
 	}
-	err := s.store.UpdateTV(tv.MAC, func(t *config.TV) { *t = tv })
+	err := s.store.UpdateTV(tv.MAC, func(t *config.TV) {
+		// The settings page holds a snapshot; keep fields the app maintains
+		// itself (pairing token, DHCP address, tracked volume).
+		tv.IP, tv.Secure, tv.Token, tv.Volume = t.IP, t.Secure, t.Token, t.Volume
+		*t = tv
+	})
 	s.emitState()
 	return err
 }
