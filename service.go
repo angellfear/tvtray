@@ -196,12 +196,13 @@ func (s *TvService) Settings() SettingsInfo {
 }
 
 type ScanItem struct {
-	MAC   string `json:"mac"`
-	IP    string `json:"ip"`
-	Name  string `json:"name"`
-	Model string `json:"model"`
-	Net   string `json:"net"`
-	Added bool   `json:"added"`
+	MAC    string `json:"mac"`
+	IP     string `json:"ip"`
+	Name   string `json:"name"`
+	Model  string `json:"model"`
+	Net    string `json:"net"`
+	Added  bool   `json:"added"`
+	Secure bool   `json:"secure"`
 }
 
 func (s *TvService) Scan() []ScanItem {
@@ -214,7 +215,7 @@ func (s *TvService) Scan() []ScanItem {
 		if f.MAC == "" {
 			continue
 		}
-		out = append(out, ScanItem{MAC: f.MAC, IP: f.IP, Name: cleanName(f.Name), Model: f.Model, Net: f.Net, Added: known[f.MAC]})
+		out = append(out, ScanItem{MAC: f.MAC, IP: f.IP, Name: cleanName(f.Name), Model: f.Model, Net: f.Net, Added: known[f.MAC], Secure: f.TokenAuth})
 		// Keep the IP of known TVs up to date.
 		if known[f.MAC] {
 			ip := f.IP
@@ -239,6 +240,7 @@ func (s *TvService) AddTV(item ScanItem) error {
 			}
 		}
 		tv := config.NewTV(mac, item.IP, item.Name, item.Model)
+		tv.Secure = item.Secure
 		if p := presets.Match(s.presetList(), item.Model); p != nil {
 			applyPreset(tv, p)
 			s.log.Info("preset applied", "tv", tv.Name, "preset", p.ID)

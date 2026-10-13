@@ -43,6 +43,9 @@ type TV struct {
 	VolumeMode  string    `json:"volumeMode"`
 	Volume      int       `json:"volume"` // last known value, used in keys mode
 	Backlight   Backlight `json:"backlight"`
+	// Secure: the TV needs wss://:8002 with a token (2017+ models).
+	Secure bool   `json:"secure"`
+	Token  string `json:"token"`
 }
 
 type Config struct {
@@ -144,6 +147,8 @@ func Load(path string) (*Store, error) {
 			ShowInPanel: sec.Key("show_in_panel").MustBool(true),
 			VolumeMode:  sec.Key("volume_mode").In(VolumeUPnP, []string{VolumeUPnP, VolumeKeys}),
 			Volume:      sec.Key("volume").MustInt(-1),
+			Secure:      sec.Key("secure").MustBool(false),
+			Token:       sec.Key("token").String(),
 			Backlight: Backlight{
 				Enabled:     sec.Key("backlight_enabled").MustBool(false),
 				OpenKeys:    splitKeys(sec.Key("backlight_open_keys").MustString(strings.Join(d.OpenKeys, ","))),
@@ -251,6 +256,8 @@ func (s *Store) saveLocked() error {
 		set("show_in_panel", tv.ShowInPanel)
 		set("volume_mode", tv.VolumeMode)
 		set("volume", tv.Volume)
+		set("secure", tv.Secure)
+		set("token", tv.Token)
 		set("backlight_enabled", tv.Backlight.Enabled)
 		set("backlight_open_keys", strings.Join(tv.Backlight.OpenKeys, ","))
 		set("backlight_close_keys", strings.Join(tv.Backlight.CloseKeys, ","))

@@ -54,6 +54,12 @@ func (c *Controller) remote(tv config.TV) *samsung.Remote {
 	r := c.remotes[tv.MAC]
 	if r == nil {
 		r = samsung.NewRemote(tv.IP)
+		r.Secure, r.Token = tv.Secure, tv.Token
+		mac, name := tv.MAC, tv.Name
+		r.OnAuth = func(secure bool, token string) {
+			c.log.Info("tv paired", "tv", name, "secure", secure)
+			c.store.UpdateTV(mac, func(t *config.TV) { t.Secure, t.Token = secure, token })
+		}
 		c.remotes[tv.MAC] = r
 	} else {
 		r.SetIP(tv.IP)
@@ -296,10 +302,20 @@ func (c *Controller) SetVolume(mac string, v int) error {
 		return err
 	}
 	v = clamp(v, 0, 100)
-	if tv.VolumeMode != config.VolumeKeys {
-		return samsung.SetVolume(context.Background(), tv.IP, v)
-	}
 	cur := tv.Volume
+	if tv.VolumeMode != config.VolumeKeys {
+		err := samsung.SetVolume(context.Background(), tv.IP, v)
+		if err == nil {
+			return nil
+		}
+		// Some models (e.g. 2017 MU) report the volume over UPnP but reject
+		// SetVolume; then step there with VOL+/VOL- from the reported value.
+		got, gerr := samsung.GetVolume(context.Background(), tv.IP)
+		if gerr != nil {
+			return err
+		}
+		cur = got
+	}
 	if cur < 0 {
 		cur = v // unknown: just adopt the slider value
 	}

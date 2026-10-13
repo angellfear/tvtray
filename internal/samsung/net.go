@@ -30,6 +30,8 @@ type Info struct {
 	IP      string
 	Net     string // "wireless" or "wired"
 	WifiMAC string
+	// TokenAuth: the remote channel needs wss://:8002 and a pairing token.
+	TokenAuth bool
 }
 
 func GetInfo(ctx context.Context, ip string) (*Info, error) {
@@ -49,6 +51,7 @@ func GetInfo(ctx context.Context, ip string) (*Info, error) {
 			IP          string `json:"ip"`
 			NetworkType string `json:"networkType"`
 			WifiMac     string `json:"wifiMac"`
+			TokenAuth   string `json:"TokenAuthSupport"`
 		} `json:"device"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
@@ -61,12 +64,13 @@ func GetInfo(ctx context.Context, ip string) (*Info, error) {
 		v.Device.IP = ip
 	}
 	return &Info{
-		ID:      v.ID,
-		Name:    v.Name,
-		Model:   v.Device.ModelName,
-		IP:      v.Device.IP,
-		Net:     v.Device.NetworkType,
-		WifiMAC: NormalizeMAC(v.Device.WifiMac),
+		ID:        v.ID,
+		Name:      v.Name,
+		Model:     v.Device.ModelName,
+		IP:        v.Device.IP,
+		Net:       v.Device.NetworkType,
+		WifiMAC:   NormalizeMAC(v.Device.WifiMac),
+		TokenAuth: v.Device.TokenAuth == "true",
 	}, nil
 }
 

@@ -75,5 +75,6 @@ var dict = map[string]tr{
 	"err.noFolder":      {"ru": "укажите папку", "en": "choose a folder", "de": "Ordner auswählen"},
 	"err.uacDenied":     {"ru": "запрос прав администратора отклонён", "en": "administrator rights request was declined", "de": "Administratorrechte wurden verweigert"},
 	"err.elevatedCode":  {"ru": "установка с правами администратора завершилась с кодом %d", "en": "elevated install exited with code %d", "de": "Installation mit Administratorrechten endete mit Code %d"},
+	"err.unauthorized":  {"ru": "ТВ не разрешил подключение — нажмите «Разрешить» на экране ТВ и повторите", "en": "the TV did not allow the connection — choose “Allow” on the TV screen and try again", "de": "der Fernseher hat die Verbindung nicht erlaubt — „Zulassen“ am TV wählen und erneut versuchen"},
 	"err.shortcut":      {"ru": "программа установлена, но ярлык в «Пуске» не создан: %w", "en": "installed, but the Start menu shortcut could not be created: %w", "de": "installiert, aber die Startmenü-Verknüpfung konnte nicht erstellt werden: %w"},
 }
