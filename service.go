@@ -266,16 +266,15 @@ func (s *TvService) presetList() []presets.Preset { return presets.Load(s.preset
 
 func applyPreset(tv *config.TV, p *presets.Preset) {
 	b := p.Backlight
-	toSteps := func(keys []string) []config.Step {
-		out := make([]config.Step, len(keys))
-		for i, k := range keys {
-			out[i] = config.Step{Key: k}
+	steps := func(plain, withPauses []string) []config.Step {
+		if len(withPauses) > 0 {
+			plain = withPauses
 		}
-		return out
+		return config.ParseSteps(strings.Join(plain, ","))
 	}
 	tv.Backlight.Enabled = true
-	tv.Backlight.OpenKeys = toSteps(b.OpenKeys)
-	tv.Backlight.CloseKeys = toSteps(b.CloseKeys)
+	tv.Backlight.OpenKeys = steps(b.OpenKeys, b.OpenSteps)
+	tv.Backlight.CloseKeys = steps(b.CloseKeys, b.CloseSteps)
 	tv.Backlight.Max = b.Max
 	if b.NavDelayMs > 0 {
 		tv.Backlight.NavDelayMs = b.NavDelayMs
