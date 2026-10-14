@@ -13,11 +13,12 @@ TvTray скачивает их кнопкой **«Обновить с GitHub»**
   "models": ["UE49KU6470"],
   "modelPattern": "^(UE|UN|UA)\\d{2}KU\\d",
   "backlight": {
-    "openKeys": ["KEY_MENU", "KEY_ENTER", "KEY_DOWN", "KEY_ENTER"],
+    "openKeys": ["KEY_MENU", "KEY_RIGHT", "KEY_DOWN", "KEY_RIGHT"],
+    "openSteps": ["KEY_MENU:500", "KEY_RIGHT:350", "KEY_DOWN", "KEY_RIGHT"],
     "closeKeys": ["KEY_EXIT"],
     "max": 20,
-    "navDelayMs": 340,
-    "stepDelayMs": 100
+    "navDelayMs": 150,
+    "stepDelayMs": 150
   }
 }
 ```
@@ -29,9 +30,11 @@ TvTray скачивает их кнопкой **«Обновить с GitHub»**
 | `models` | Точные модели, проверенные на реальном ТВ (имеют приоритет) |
 | `modelPattern` | Регулярное выражение для серии (`modelName` из `http://<ТВ>:8001/api/v2/`) |
 | `backlight.openKeys` | Кнопки, после которых на экране активен ползунок подсветки |
+| `backlight.openSteps` | Те же кнопки с личной паузой `КНОПКА:мс` (TvTray 1.3+; если задано, заменяет `openKeys`) |
 | `backlight.closeKeys` | Кнопки, закрывающие меню |
+| `backlight.closeSteps` | То же для `closeKeys` (необязательно) |
 | `backlight.max` | Максимум шкалы подсветки |
-| `backlight.navDelayMs` | Пауза после каждой кнопки меню, мс |
+| `backlight.navDelayMs` | Пауза между нажатиями (если у кнопки нет своей), мс |
 | `backlight.stepDelayMs` | Пауза между нажатиями ◀/▶, мс |
 
 ## Как добавить свой ТВ
