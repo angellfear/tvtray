@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"gopkg.in/ini.v1"
 )
@@ -20,17 +22,154 @@ const (
 	VolumeKeys = "keys" // KEY_VOLUP/KEY_VOLDOWN, value tracked by the app
 )
 
+// Step is one key of a macro. Pause (ms) overrides the default pause between
+// presses for this key; 0 means "use the default".
+type Step struct {
+	Key   string `json:"key"`
+	Pause int    `json:"pause"`
+}
+
+// ScheduleItem switches the backlight to Value when the clock reaches Time.
+type ScheduleItem struct {
+	Time  string `json:"time"`  // "HH:MM"
+	Value int    `json:"value"` // backlight level
+}
+
 // Backlight describes the remote-key macro that reaches the backlight slider
 // in the TV menu. The app tracks the current value itself and sends only the
-// difference as LEFT/RIGHT presses.
+// difference as LEFT/RIGHT presses. Schedule switches the level by the clock;
+// a TV that was off at the switch time catches up when it turns on.
 type Backlight struct {
-	Enabled     bool     `json:"enabled"`
-	OpenKeys    []string `json:"openKeys"`  // keys that open the backlight slider
-	CloseKeys   []string `json:"closeKeys"` // keys that close the menu again
-	Max         int      `json:"max"`
-	Current     int      `json:"current"`     // -1 = unknown, needs sync
-	NavDelayMs  int      `json:"navDelayMs"`  // pause after each Open/Close key (menu animations)
-	StepDelayMs int      `json:"stepDelayMs"` // pause between LEFT/RIGHT presses
+	Enabled   bool           `json:"enabled"`
+	ByTime    bool           `json:"byTime"` // follow the schedule
+	Schedule  []ScheduleItem `json:"schedule"`
+	OpenKeys  []Step         `json:"openKeys"`
+	CloseKeys []Step         `json:"closeKeys"`
+	Max       int            `json:"max"`
+	Current   int            `json:"current"` // -1 = unknown, needs sync
+	PauseMs   int            `json:"pauseMs"` // default pause between presses
+}
+
+// DefaultPauseMs is the pause between presses when none is set per key.
+const DefaultPauseMs = 600
+
+func DefaultBacklight() Backlight {
+	return Backlight{
+		OpenKeys:  []Step{{Key: "KEY_MENU"}, {Key: "KEY_ENTER"}, {Key: "KEY_ENTER"}},
+		CloseKeys: []Step{{Key: "KEY_EXIT"}},
+		Max:       20,
+		Current:   -1,
+		PauseMs:   DefaultPauseMs,
+	}
+}
+
+// ValidTime reports whether s is a "HH:MM" clock time (or empty).
+func ValidTime(s string) bool {
+	if s == "" {
+		return true
+	}
+	_, err := time.Parse("15:04", s)
+	return err == nil
+}
+
+// Sanitize drops broken steps and schedule points (a hand-edited ini or a
+// stale page) and clamps the values.
+func (b *Backlight) Sanitize() {
+	cleanSteps := func(in []Step) []Step {
+		out := make([]Step, 0, len(in))
+		for _, s := range in {
+			s.Key = strings.ToUpper(strings.TrimSpace(s.Key))
+			if s.Key == "" {
+				continue
+			}
+			if s.Pause < 0 {
+				s.Pause = 0
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+	b.OpenKeys = cleanSteps(b.OpenKeys)
+	b.CloseKeys = cleanSteps(b.CloseKeys)
+	if b.Max < 1 {
+		b.Max = 1
+	}
+	sched := make([]ScheduleItem, 0, len(b.Schedule))
+	for _, it := range b.Schedule {
+		if !ValidTime(it.Time) {
+			continue
+		}
+		it.Value = clampInt(it.Value, 0, b.Max)
+		sched = append(sched, it)
+	}
+	b.Schedule = sched
+	if b.PauseMs < 0 {
+		b.PauseMs = DefaultPauseMs
+	}
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// parseSteps reads "KEY,KEY:1200,..." (old plain lists load with pause 0).
+func parseSteps(s string) []Step {
+	var out []Step
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ';' }) {
+		key, pause, _ := strings.Cut(strings.TrimSpace(part), ":")
+		key = strings.ToUpper(strings.TrimSpace(key))
+		if key == "" {
+			continue
+		}
+		ms, _ := strconv.Atoi(strings.TrimSpace(pause))
+		out = append(out, Step{Key: key, Pause: max(0, ms)})
+	}
+	return out
+}
+
+func formatSteps(steps []Step) string {
+	parts := make([]string, len(steps))
+	for i, s := range steps {
+		if s.Pause > 0 {
+			parts[i] = s.Key + ":" + strconv.Itoa(s.Pause)
+		} else {
+			parts[i] = s.Key
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+// parseSchedule reads "HH:MM=V;HH:MM=V".
+func parseSchedule(s string) []ScheduleItem {
+	var out []ScheduleItem
+	for _, part := range strings.Split(s, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		timeStr, val, ok := strings.Cut(part, "=")
+		timeStr = strings.TrimSpace(timeStr)
+		v, err := strconv.Atoi(strings.TrimSpace(val))
+		if !ok || err != nil || !ValidTime(timeStr) {
+			continue
+		}
+		out = append(out, ScheduleItem{Time: timeStr, Value: v})
+	}
+	return out
+}
+
+func formatSchedule(items []ScheduleItem) string {
+	parts := make([]string, len(items))
+	for i, it := range items {
+		parts[i] = it.Time + "=" + strconv.Itoa(it.Value)
+	}
+	return strings.Join(parts, ";")
 }
 
 type TV struct {
@@ -59,17 +198,6 @@ type Config struct {
 	Autostart bool `json:"autostart"`
 	// UI language: ru, en, de ("" = system language).
 	Language string `json:"language"`
-}
-
-func DefaultBacklight() Backlight {
-	return Backlight{
-		OpenKeys:    []string{"KEY_MENU", "KEY_ENTER", "KEY_ENTER"},
-		CloseKeys:   []string{"KEY_EXIT"},
-		Max:         20,
-		Current:     -1,
-		NavDelayMs:  700,
-		StepDelayMs: 150,
-	}
 }
 
 func NewTV(mac, ip, name, model string) *TV {
@@ -150,13 +278,14 @@ func Load(path string) (*Store, error) {
 			Secure:      sec.Key("secure").MustBool(false),
 			Token:       sec.Key("token").String(),
 			Backlight: Backlight{
-				Enabled:     sec.Key("backlight_enabled").MustBool(false),
-				OpenKeys:    splitKeys(sec.Key("backlight_open_keys").MustString(strings.Join(d.OpenKeys, ","))),
-				CloseKeys:   splitKeys(sec.Key("backlight_close_keys").MustString(strings.Join(d.CloseKeys, ","))),
-				Max:         sec.Key("backlight_max").MustInt(d.Max),
-				Current:     sec.Key("backlight_current").MustInt(-1),
-				NavDelayMs:  sec.Key("backlight_nav_delay_ms").MustInt(d.NavDelayMs),
-				StepDelayMs: sec.Key("backlight_step_delay_ms").MustInt(d.StepDelayMs),
+				Enabled:   sec.Key("backlight_enabled").MustBool(false),
+				ByTime:    sec.Key("backlight_by_time").MustBool(false),
+				Schedule:  parseSchedule(sec.Key("backlight_schedule").String()),
+				OpenKeys:  parseSteps(sec.Key("backlight_open_keys").MustString("KEY_MENU,KEY_ENTER,KEY_ENTER")),
+				CloseKeys: parseSteps(sec.Key("backlight_close_keys").MustString("KEY_EXIT")),
+				Max:       sec.Key("backlight_max").MustInt(d.Max),
+				Current:   sec.Key("backlight_current").MustInt(-1),
+				PauseMs:   sec.Key("backlight_pause_ms").MustInt(DefaultPauseMs),
 			},
 		}
 		if tv.MAC != "" {
@@ -164,14 +293,6 @@ func Load(path string) (*Store, error) {
 		}
 	}
 	return s, nil
-}
-
-func splitKeys(s string) []string {
-	var out []string
-	for _, k := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
-		out = append(out, strings.ToUpper(k))
-	}
-	return out
 }
 
 // Path is the ini file location.
@@ -230,8 +351,9 @@ func (s *Store) Save() error {
 
 func cloneTV(tv *TV) TV {
 	c := *tv
-	c.Backlight.OpenKeys = append([]string(nil), tv.Backlight.OpenKeys...)
-	c.Backlight.CloseKeys = append([]string(nil), tv.Backlight.CloseKeys...)
+	c.Backlight.OpenKeys = append([]Step(nil), tv.Backlight.OpenKeys...)
+	c.Backlight.CloseKeys = append([]Step(nil), tv.Backlight.CloseKeys...)
+	c.Backlight.Schedule = append([]ScheduleItem(nil), tv.Backlight.Schedule...)
 	return c
 }
 
@@ -259,12 +381,13 @@ func (s *Store) saveLocked() error {
 		set("secure", tv.Secure)
 		set("token", tv.Token)
 		set("backlight_enabled", tv.Backlight.Enabled)
-		set("backlight_open_keys", strings.Join(tv.Backlight.OpenKeys, ","))
-		set("backlight_close_keys", strings.Join(tv.Backlight.CloseKeys, ","))
+		set("backlight_by_time", tv.Backlight.ByTime)
+		set("backlight_schedule", formatSchedule(tv.Backlight.Schedule))
+		set("backlight_open_keys", formatSteps(tv.Backlight.OpenKeys))
+		set("backlight_close_keys", formatSteps(tv.Backlight.CloseKeys))
 		set("backlight_max", tv.Backlight.Max)
 		set("backlight_current", tv.Backlight.Current)
-		set("backlight_nav_delay_ms", tv.Backlight.NavDelayMs)
-		set("backlight_step_delay_ms", tv.Backlight.StepDelayMs)
+		set("backlight_pause_ms", tv.Backlight.PauseMs)
 	}
 
 	tmp := s.path + ".tmp"

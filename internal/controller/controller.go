@@ -27,6 +27,7 @@ type Controller struct {
 	waking    map[string]context.CancelFunc
 	blTarget  map[string]int  // pending backlight target per TV
 	blRunning map[string]bool // macro worker active per TV
+	autoBL    map[string]int  // last backlight value applied by the schedule
 	offTimer  *time.Timer
 }
 
@@ -39,6 +40,7 @@ func New(store *config.Store, log *slog.Logger) *Controller {
 		waking:    map[string]context.CancelFunc{},
 		blTarget:  map[string]int{},
 		blRunning: map[string]bool{},
+		autoBL:    map[string]int{},
 	}
 }
 
@@ -131,6 +133,7 @@ func (c *Controller) poll() {
 		}
 		c.setOnline(tv.MAC, on)
 	}
+	c.applyTimeBacklight(cfg)
 }
 
 // Refresh polls immediately (e.g. when the panel opens).
@@ -388,18 +391,28 @@ func (c *Controller) backlightWorker(mac string) {
 
 func (c *Controller) runBacklight(tv config.TV, target int) error {
 	b := tv.Backlight
-	nav := time.Duration(b.NavDelayMs) * time.Millisecond
-	step := time.Duration(b.StepDelayMs) * time.Millisecond
+	def := time.Duration(b.PauseMs) * time.Millisecond
+	delay := func(s config.Step) time.Duration {
+		if s.Pause > 0 {
+			return time.Duration(s.Pause) * time.Millisecond
+		}
+		return def
+	}
 
 	var seq []samsung.Key
+	// Clean start: close whatever the previous (possibly broken) macro left
+	// on screen, so OpenKeys always begin from the same state.
+	for _, k := range b.CloseKeys {
+		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
+	}
 	for _, k := range b.OpenKeys {
-		seq = append(seq, samsung.Key{Key: k, Delay: nav})
+		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
 	}
 	cur := b.Current
 	if cur < 0 || cur > b.Max {
 		// Unknown value: go to zero first, then up.
 		for i := 0; i < b.Max; i++ {
-			seq = append(seq, samsung.Key{Key: "KEY_LEFT", Delay: step})
+			seq = append(seq, samsung.Key{Key: "KEY_LEFT", Delay: def})
 		}
 		cur = 0
 	}
@@ -408,30 +421,83 @@ func (c *Controller) runBacklight(tv config.TV, target int) error {
 		key, n = "KEY_LEFT", -n
 	}
 	for i := 0; i < n; i++ {
-		seq = append(seq, samsung.Key{Key: key, Delay: step})
+		seq = append(seq, samsung.Key{Key: key, Delay: def})
 	}
 	for _, k := range b.CloseKeys {
-		seq = append(seq, samsung.Key{Key: k, Delay: nav})
+		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	return c.remote(tv).SendKeys(ctx, seq...)
 }
 
-// TestKeys sends a raw sequence with the TV's nav delay (calibration helper).
+// TestKeys sends a raw sequence with the default pause (calibration helper).
 func (c *Controller) TestKeys(mac string, keys []string) error {
 	tv, err := c.tv(mac)
 	if err != nil {
 		return err
 	}
-	nav := time.Duration(tv.Backlight.NavDelayMs) * time.Millisecond
+	pause := time.Duration(tv.Backlight.PauseMs) * time.Millisecond
 	seq := make([]samsung.Key, len(keys))
 	for i, k := range keys {
-		seq[i] = samsung.Key{Key: k, Delay: nav}
+		seq[i] = samsung.Key{Key: k, Delay: pause}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return c.remote(tv).SendKeys(ctx, seq...)
+}
+
+// ---- backlight schedule ----------------------------------------------------
+
+// desiredBacklight returns the value of the schedule point that was the last
+// to pass today (local clock), or false when nothing is scheduled.
+func desiredBacklight(b config.Backlight, now time.Time) (int, bool) {
+	mins := now.Hour()*60 + now.Minute()
+	best, bestAt := 0, -1
+	for _, it := range b.Schedule {
+		t, err := time.Parse("15:04", it.Time)
+		if err != nil {
+			continue
+		}
+		if at := t.Hour()*60 + t.Minute(); at <= mins && at > bestAt {
+			best, bestAt = it.Value, at
+		}
+	}
+	return best, bestAt >= 0
+}
+
+// applyTimeBacklight switches the backlight by schedule. Runs from poll
+// (every 3 s); it only sends when the scheduled value changed. The value is
+// derived from the clock, so a TV that was off at the switch time picks the
+// latest passed point up as soon as it is online again — nothing to replay.
+func (c *Controller) applyTimeBacklight(cfg config.Config) {
+	now := time.Now()
+	for _, tv := range cfg.TVs {
+		b := tv.Backlight
+		if !b.ByTime || len(b.Schedule) == 0 {
+			continue
+		}
+		want, ok := desiredBacklight(b, now)
+		if !ok {
+			continue
+		}
+		c.mu.Lock()
+		online := c.online[tv.MAC]
+		prev, applied := c.autoBL[tv.MAC]
+		c.mu.Unlock()
+		if !online || applied && prev == want {
+			continue
+		}
+		if err := c.SetBacklight(tv.MAC, want, false); err != nil {
+			// Not recorded, so the next poll retries until the TV answers.
+			c.log.Warn("scheduled backlight failed", "tv", tv.Name, "value", want, "err", err)
+			continue
+		}
+		c.mu.Lock()
+		c.autoBL[tv.MAC] = want
+		c.mu.Unlock()
+		c.log.Info("scheduled backlight", "tv", tv.Name, "value", want)
+	}
 }
 
 func clamp(v, lo, hi int) int {

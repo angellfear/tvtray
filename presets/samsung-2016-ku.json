@@ -7,7 +7,6 @@
     "openKeys": ["KEY_MENU", "KEY_ENTER", "KEY_DOWN", "KEY_DOWN", "KEY_DOWN", "KEY_DOWN", "KEY_ENTER", "KEY_ENTER"],
     "closeKeys": ["KEY_EXIT"],
     "max": 20,
-    "navDelayMs": 340,
-    "stepDelayMs": 100
+    "pauseMs": 600
   }
 }

@@ -266,15 +266,19 @@ func (s *TvService) presetList() []presets.Preset { return presets.Load(s.preset
 
 func applyPreset(tv *config.TV, p *presets.Preset) {
 	b := p.Backlight
-	tv.Backlight.Enabled = true
-	tv.Backlight.OpenKeys = append([]string(nil), b.OpenKeys...)
-	tv.Backlight.CloseKeys = append([]string(nil), b.CloseKeys...)
-	tv.Backlight.Max = b.Max
-	if b.NavDelayMs > 0 {
-		tv.Backlight.NavDelayMs = b.NavDelayMs
+	toSteps := func(keys []string) []config.Step {
+		out := make([]config.Step, len(keys))
+		for i, k := range keys {
+			out[i] = config.Step{Key: k}
+		}
+		return out
 	}
-	if b.StepDelayMs > 0 {
-		tv.Backlight.StepDelayMs = b.StepDelayMs
+	tv.Backlight.Enabled = true
+	tv.Backlight.OpenKeys = toSteps(b.OpenKeys)
+	tv.Backlight.CloseKeys = toSteps(b.CloseKeys)
+	tv.Backlight.Max = b.Max
+	if b.PauseMs > 0 {
+		tv.Backlight.PauseMs = b.PauseMs
 	}
 	if tv.Backlight.Current > b.Max {
 		tv.Backlight.Current = -1
@@ -331,12 +335,10 @@ func (s *TvService) RemoveTV(mac string) error {
 }
 
 func (s *TvService) SaveTV(tv config.TV) error {
-	if tv.Backlight.Max < 1 {
-		tv.Backlight.Max = 1
-	}
 	if tv.VolumeMode != config.VolumeKeys {
 		tv.VolumeMode = config.VolumeUPnP
 	}
+	tv.Backlight.Sanitize()
 	err := s.store.UpdateTV(tv.MAC, func(t *config.TV) {
 		// The settings page holds a snapshot; keep fields the app maintains
 		// itself (pairing token, DHCP address, tracked volume).

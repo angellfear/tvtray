@@ -67,7 +67,7 @@ document.title = tr("set.title");
 let state = null;
 
 const num = (v, d) => Number.isFinite(+v) && v !== "" ? +v : d;
-const keysText = a => (a || []).join(", ");
+const keysText = a => (a || []).map(s => s.key).join(", ");
 
 function tvCard(t, online) {
   const save = debounce(() => safe(async () => { await tv("SaveTV", t); }), 300);
@@ -114,16 +114,17 @@ function tvCard(t, online) {
         presetRow(t),
         el("span", {}, tr("bl.enable")),
         check(tr("bl.showSlider"), () => b.enabled, v => b.enabled = v),
+        el("span", {}, tr("bl.byTime")),
+        check(tr("bl.byTimeLabel"), () => b.byTime, v => b.byTime = v),
         el("span", {}, tr("bl.open")),
         keySeqField({ mac: t.mac, get: () => b.openKeys || [], set: k => { b.openKeys = k; save(); } }),
         el("span", {}, tr("bl.close")),
         keySeqField({ mac: t.mac, get: () => b.closeKeys || [], set: k => { b.closeKeys = k; save(); } }),
         el("span", {}, tr("bl.max")),
         number(() => b.max, v => b.max = v, 1, 100),
-        el("span", {}, tr("bl.navDelay")),
-        number(() => b.navDelayMs, v => b.navDelayMs = v, 100, 5000),
-        el("span", {}, tr("bl.stepDelay")),
-        number(() => b.stepDelayMs, v => b.stepDelayMs = v, 30, 2000),
+        el("span", {}, tr("bl.pause")),
+        el("span", { class: "row" }, number(() => b.pauseMs, v => b.pauseMs = v, 50, 5000),
+          el("span", { class: "help" }, tr("bl.pauseHelp"))),
         el("span", {}, tr("bl.current")),
         el("span", { class: "row" }, blCurrent, el("span", { class: "help" }, tr("bl.currentHelp"))),
         el("span", {}, tr("bl.check")),
@@ -139,10 +140,35 @@ function tvCard(t, online) {
             toast(tr("bl.sent"));
           }) }, tr("bl.sync")),
         ),
+        el("span", {}, tr("bl.schedule")),
+        scheduleField(t, b, save),
+        el("span", { class: "help full" }, tr("bl.scheduleHelp")),
       ),
     ),
   );
   return card;
+}
+
+// Schedule: "at HH:MM set the level V" points, applied by the PC clock.
+// A TV that was off at the switch time catches up when it turns on.
+function scheduleField(t, b, save) {
+  const items = () => b.schedule || (b.schedule = []);
+  const wrap = el("div", { class: "full" });
+  const render = () => {
+    wrap.replaceChildren(
+      ...items().map((it, i) => el("div", { class: "row", style: "margin-bottom: 6px" },
+        el("input", { type: "time", value: it.time || "", onchange: e => { it.time = e.target.value; save(); } }),
+        el("input", { type: "number", min: 0, max: b.max, value: it.value ?? 0, title: tr("bl.title"), style: "width: 70px",
+          onchange: e => { it.value = num(e.target.value, 0); save(); } }),
+        el("button", { class: "danger", onclick: () => { items().splice(i, 1); save(); render(); } }, "×"))),
+      el("button", { onclick: () => {
+        items().push({ time: "22:00", value: Math.max(0, Math.round((b.max || 20) / 3)) });
+        save();
+        render();
+      } }, tr("bl.addTime")));
+  };
+  render();
+  return wrap;
 }
 
 // Preset picker: matching preset is preselected; GitHub refresh reloads the list.
