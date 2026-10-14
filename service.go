@@ -277,8 +277,11 @@ func applyPreset(tv *config.TV, p *presets.Preset) {
 	tv.Backlight.OpenKeys = toSteps(b.OpenKeys)
 	tv.Backlight.CloseKeys = toSteps(b.CloseKeys)
 	tv.Backlight.Max = b.Max
-	if b.PauseMs > 0 {
-		tv.Backlight.PauseMs = b.PauseMs
+	if b.NavDelayMs > 0 {
+		tv.Backlight.NavDelayMs = b.NavDelayMs
+	}
+	if b.StepDelayMs > 0 {
+		tv.Backlight.StepDelayMs = b.StepDelayMs
 	}
 	if tv.Backlight.Current > b.Max {
 		tv.Backlight.Current = -1
@@ -408,11 +411,8 @@ func (s *TvService) applyAutostart(on bool) {
 
 // TestKeys sends a comma-separated key list (backlight calibration).
 func (s *TvService) TestKeys(mac, keys string) error {
-	var list []string
-	for _, k := range strings.FieldsFunc(keys, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
-		list = append(list, strings.ToUpper(k))
-	}
-	return s.ctrl.TestKeys(mac, list)
+	// "KEY_MENU,KEY_ENTER:1500" — the same format as the ini, per-key pauses included.
+	return s.ctrl.TestKeys(mac, config.ParseSteps(keys))
 }
 
 func (s *TvService) Uninstall() error {

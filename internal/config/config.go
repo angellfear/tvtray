@@ -47,29 +47,30 @@ type Backlight struct {
 	CloseKeys []Step         `json:"closeKeys"`
 	Max       int            `json:"max"`
 	Current   int            `json:"current"` // -1 = unknown, needs sync
-	PauseMs   int            `json:"pauseMs"` // default pause between presses
+	// NavDelayMs: pause after each Open/Close key (menu animations), unless
+	// the step sets its own. StepDelayMs: pause between LEFT/RIGHT presses.
+	NavDelayMs  int `json:"navDelayMs"`
+	StepDelayMs int `json:"stepDelayMs"`
 }
-
-// DefaultPauseMs is the pause between presses when none is set per key.
-const DefaultPauseMs = 600
 
 func DefaultBacklight() Backlight {
 	return Backlight{
-		OpenKeys:  []Step{{Key: "KEY_MENU"}, {Key: "KEY_ENTER"}, {Key: "KEY_ENTER"}},
-		CloseKeys: []Step{{Key: "KEY_EXIT"}},
-		Max:       20,
-		Current:   -1,
-		PauseMs:   DefaultPauseMs,
+		OpenKeys:    []Step{{Key: "KEY_MENU"}, {Key: "KEY_ENTER"}, {Key: "KEY_ENTER"}},
+		CloseKeys:   []Step{{Key: "KEY_EXIT"}},
+		Max:         20,
+		Current:     -1,
+		NavDelayMs:  700,
+		StepDelayMs: 150,
 	}
 }
 
-// ValidTime reports whether s is a "HH:MM" clock time (or empty).
-func ValidTime(s string) bool {
-	if s == "" {
-		return true
+// ParseClock parses "HH:MM" (also "H:MM") into minutes since midnight.
+func ParseClock(s string) (int, bool) {
+	t, err := time.Parse("15:04", strings.TrimSpace(s))
+	if err != nil {
+		return 0, false
 	}
-	_, err := time.Parse("15:04", s)
-	return err == nil
+	return t.Hour()*60 + t.Minute(), true
 }
 
 // Sanitize drops broken steps and schedule points (a hand-edited ini or a
@@ -96,15 +97,22 @@ func (b *Backlight) Sanitize() {
 	}
 	sched := make([]ScheduleItem, 0, len(b.Schedule))
 	for _, it := range b.Schedule {
-		if !ValidTime(it.Time) {
+		m, ok := ParseClock(it.Time)
+		if !ok {
 			continue
 		}
+		it.Time = fmt.Sprintf("%02d:%02d", m/60, m%60)
 		it.Value = clampInt(it.Value, 0, b.Max)
 		sched = append(sched, it)
 	}
+	sort.SliceStable(sched, func(i, j int) bool { return sched[i].Time < sched[j].Time })
 	b.Schedule = sched
-	if b.PauseMs < 0 {
-		b.PauseMs = DefaultPauseMs
+	d := DefaultBacklight()
+	if b.NavDelayMs <= 0 {
+		b.NavDelayMs = d.NavDelayMs
+	}
+	if b.StepDelayMs <= 0 {
+		b.StepDelayMs = d.StepDelayMs
 	}
 }
 
@@ -118,8 +126,8 @@ func clampInt(v, lo, hi int) int {
 	return v
 }
 
-// parseSteps reads "KEY,KEY:1200,..." (old plain lists load with pause 0).
-func parseSteps(s string) []Step {
+// ParseSteps reads "KEY,KEY:1200,..." (old plain lists load with pause 0).
+func ParseSteps(s string) []Step {
 	var out []Step
 	for _, part := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ';' }) {
 		key, pause, _ := strings.Cut(strings.TrimSpace(part), ":")
@@ -133,7 +141,7 @@ func parseSteps(s string) []Step {
 	return out
 }
 
-func formatSteps(steps []Step) string {
+func FormatSteps(steps []Step) string {
 	parts := make([]string, len(steps))
 	for i, s := range steps {
 		if s.Pause > 0 {
@@ -154,12 +162,12 @@ func parseSchedule(s string) []ScheduleItem {
 			continue
 		}
 		timeStr, val, ok := strings.Cut(part, "=")
-		timeStr = strings.TrimSpace(timeStr)
+		m, valid := ParseClock(timeStr)
 		v, err := strconv.Atoi(strings.TrimSpace(val))
-		if !ok || err != nil || !ValidTime(timeStr) {
+		if !ok || err != nil || !valid {
 			continue
 		}
-		out = append(out, ScheduleItem{Time: timeStr, Value: v})
+		out = append(out, ScheduleItem{Time: fmt.Sprintf("%02d:%02d", m/60, m%60), Value: v})
 	}
 	return out
 }
@@ -278,14 +286,15 @@ func Load(path string) (*Store, error) {
 			Secure:      sec.Key("secure").MustBool(false),
 			Token:       sec.Key("token").String(),
 			Backlight: Backlight{
-				Enabled:   sec.Key("backlight_enabled").MustBool(false),
-				ByTime:    sec.Key("backlight_by_time").MustBool(false),
-				Schedule:  parseSchedule(sec.Key("backlight_schedule").String()),
-				OpenKeys:  parseSteps(sec.Key("backlight_open_keys").MustString("KEY_MENU,KEY_ENTER,KEY_ENTER")),
-				CloseKeys: parseSteps(sec.Key("backlight_close_keys").MustString("KEY_EXIT")),
-				Max:       sec.Key("backlight_max").MustInt(d.Max),
-				Current:   sec.Key("backlight_current").MustInt(-1),
-				PauseMs:   sec.Key("backlight_pause_ms").MustInt(DefaultPauseMs),
+				Enabled:     sec.Key("backlight_enabled").MustBool(false),
+				ByTime:      sec.Key("backlight_by_time").MustBool(false),
+				Schedule:    parseSchedule(sec.Key("backlight_schedule").String()),
+				OpenKeys:    ParseSteps(sec.Key("backlight_open_keys").MustString(FormatSteps(d.OpenKeys))),
+				CloseKeys:   ParseSteps(sec.Key("backlight_close_keys").MustString(FormatSteps(d.CloseKeys))),
+				Max:         sec.Key("backlight_max").MustInt(d.Max),
+				Current:     sec.Key("backlight_current").MustInt(-1),
+				NavDelayMs:  sec.Key("backlight_nav_delay_ms").MustInt(d.NavDelayMs),
+				StepDelayMs: sec.Key("backlight_step_delay_ms").MustInt(d.StepDelayMs),
 			},
 		}
 		if tv.MAC != "" {
@@ -383,11 +392,12 @@ func (s *Store) saveLocked() error {
 		set("backlight_enabled", tv.Backlight.Enabled)
 		set("backlight_by_time", tv.Backlight.ByTime)
 		set("backlight_schedule", formatSchedule(tv.Backlight.Schedule))
-		set("backlight_open_keys", formatSteps(tv.Backlight.OpenKeys))
-		set("backlight_close_keys", formatSteps(tv.Backlight.CloseKeys))
+		set("backlight_open_keys", FormatSteps(tv.Backlight.OpenKeys))
+		set("backlight_close_keys", FormatSteps(tv.Backlight.CloseKeys))
 		set("backlight_max", tv.Backlight.Max)
 		set("backlight_current", tv.Backlight.Current)
-		set("backlight_pause_ms", tv.Backlight.PauseMs)
+		set("backlight_nav_delay_ms", tv.Backlight.NavDelayMs)
+		set("backlight_step_delay_ms", tv.Backlight.StepDelayMs)
 	}
 
 	tmp := s.path + ".tmp"

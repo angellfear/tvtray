@@ -57,7 +57,7 @@ button.primary { background: var(--accent); color: var(--accent-text); border-co
 button.danger { color: var(--danger); }
 button.icon { padding: 4px 8px; min-width: 32px; }
 
-input[type=text], input[type=number], select {
+input[type=text], input[type=number], input[type=time], select {
   font: inherit;
   color: var(--text);
   background: var(--surface);

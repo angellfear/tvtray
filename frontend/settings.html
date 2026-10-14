@@ -67,7 +67,7 @@ document.title = tr("set.title");
 let state = null;
 
 const num = (v, d) => Number.isFinite(+v) && v !== "" ? +v : d;
-const keysText = a => (a || []).map(s => s.key).join(", ");
+const keysText = a => (a || []).map(s => s.pause ? `${s.key}:${s.pause}` : s.key).join(",");
 
 function tvCard(t, online) {
   const save = debounce(() => safe(async () => { await tv("SaveTV", t); }), 300);
@@ -122,9 +122,11 @@ function tvCard(t, online) {
         keySeqField({ mac: t.mac, get: () => b.closeKeys || [], set: k => { b.closeKeys = k; save(); } }),
         el("span", {}, tr("bl.max")),
         number(() => b.max, v => b.max = v, 1, 100),
-        el("span", {}, tr("bl.pause")),
-        el("span", { class: "row" }, number(() => b.pauseMs, v => b.pauseMs = v, 50, 5000),
+        el("span", {}, tr("bl.navDelay")),
+        el("span", { class: "row" }, number(() => b.navDelayMs, v => b.navDelayMs = v, 100, 5000),
           el("span", { class: "help" }, tr("bl.pauseHelp"))),
+        el("span", {}, tr("bl.stepDelay")),
+        number(() => b.stepDelayMs, v => b.stepDelayMs = v, 30, 2000),
         el("span", {}, tr("bl.current")),
         el("span", { class: "row" }, blCurrent, el("span", { class: "help" }, tr("bl.currentHelp"))),
         el("span", {}, tr("bl.check")),

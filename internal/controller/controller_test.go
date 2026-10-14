@@ -15,20 +15,20 @@ func TestDesiredBacklight(t *testing.T) {
 	cases := []struct {
 		hh, mm int
 		want   int
-		ok     bool
 	}{
-		{7, 59, 0, false},  // nothing scheduled yet
-		{8, 0, 15, true},   // day level
-		{12, 0, 15, true},  // still day
-		{21, 59, 15, true}, // still day
-		{22, 0, 4, true},   // night level
-		{23, 30, 4, true},  // still night
+		{0, 30, 4},   // after midnight: yesterday's night point
+		{7, 59, 4},   // still night
+		{8, 0, 15},   // day level
+		{12, 0, 15},  // still day
+		{21, 59, 15}, // still day
+		{22, 0, 4},   // night level
+		{23, 30, 4},  // still night
 	}
 	for _, c := range cases {
 		now := time.Date(2026, 10, 14, c.hh, c.mm, 0, 0, time.Local)
-		got, ok := desiredBacklight(b, now)
-		if got != c.want || ok != c.ok {
-			t.Errorf("at %02d:%02d got (%d, %v), want (%d, %v)", c.hh, c.mm, got, ok, c.want, c.ok)
+		got, _, ok := desiredBacklight(b, now)
+		if got != c.want || !ok {
+			t.Errorf("at %02d:%02d got (%d, %v), want %d", c.hh, c.mm, got, ok, c.want)
 		}
 	}
 }
@@ -39,10 +39,10 @@ func TestDesiredBacklightIgnoresBroken(t *testing.T) {
 		{Time: "08:00", Value: 9},
 	}}
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local)
-	if got, ok := desiredBacklight(b, now); !ok || got != 9 {
+	if got, _, ok := desiredBacklight(b, now); !ok || got != 9 {
 		t.Errorf("got (%d, %v), want (9, true)", got, ok)
 	}
-	if _, ok := desiredBacklight(config.Backlight{Schedule: []config.ScheduleItem{{Time: "bad", Value: 1}}}, now); ok {
+	if _, _, ok := desiredBacklight(config.Backlight{Schedule: []config.ScheduleItem{{Time: "bad", Value: 1}}}, now); ok {
 		t.Error("broken-only schedule should not apply")
 	}
 }

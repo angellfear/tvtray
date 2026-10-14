@@ -24,10 +24,11 @@ const (
 )
 
 type Backlight struct {
-	OpenKeys  []string `json:"openKeys"`
-	CloseKeys []string `json:"closeKeys"`
-	Max       int      `json:"max"`
-	PauseMs   int      `json:"pauseMs"` // pause between presses
+	OpenKeys    []string `json:"openKeys"`
+	CloseKeys   []string `json:"closeKeys"`
+	Max         int      `json:"max"`
+	NavDelayMs  int      `json:"navDelayMs"`
+	StepDelayMs int      `json:"stepDelayMs"`
 }
 
 type Preset struct {

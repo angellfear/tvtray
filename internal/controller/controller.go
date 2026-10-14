@@ -4,6 +4,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,9 +26,11 @@ type Controller struct {
 	remotes   map[string]*samsung.Remote
 	online    map[string]bool
 	waking    map[string]context.CancelFunc
-	blTarget  map[string]int  // pending backlight target per TV
-	blRunning map[string]bool // macro worker active per TV
-	autoBL    map[string]int  // last backlight value applied by the schedule
+	blTarget  map[string]int       // pending backlight target per TV
+	blRunning map[string]bool      // macro worker active per TV
+	onSince   map[string]time.Time // when the TV was last seen coming online
+	autoBL    map[string]string    // schedule point last applied per TV ("HH:MM=V")
+	autoRetry map[string]time.Time // no scheduled retry before this time
 	offTimer  *time.Timer
 }
 
@@ -40,7 +43,9 @@ func New(store *config.Store, log *slog.Logger) *Controller {
 		waking:    map[string]context.CancelFunc{},
 		blTarget:  map[string]int{},
 		blRunning: map[string]bool{},
-		autoBL:    map[string]int{},
+		onSince:   map[string]time.Time{},
+		autoBL:    map[string]string{},
+		autoRetry: map[string]time.Time{},
 	}
 }
 
@@ -88,6 +93,9 @@ func (c *Controller) setOnline(mac string, on bool) {
 	c.mu.Lock()
 	prev, known := c.online[mac]
 	c.online[mac] = on
+	if on && (!known || !prev) {
+		c.onSince[mac] = time.Now()
+	}
 	c.mu.Unlock()
 	if !known || prev != on {
 		c.log.Info("tv state", "mac", mac, "online", on)
@@ -382,6 +390,11 @@ func (c *Controller) backlightWorker(mac string) {
 		}
 		if err := c.runBacklight(tv, target); err != nil {
 			c.log.Warn("backlight failed", "tv", tv.Name, "err", err)
+			// Let the schedule try again later instead of on every poll.
+			c.mu.Lock()
+			delete(c.autoBL, mac)
+			c.autoRetry[mac] = time.Now().Add(time.Minute)
+			c.mu.Unlock()
 			continue
 		}
 		c.store.UpdateTV(mac, func(t *config.TV) { t.Backlight.Current = target })
@@ -391,12 +404,13 @@ func (c *Controller) backlightWorker(mac string) {
 
 func (c *Controller) runBacklight(tv config.TV, target int) error {
 	b := tv.Backlight
-	def := time.Duration(b.PauseMs) * time.Millisecond
+	nav := time.Duration(b.NavDelayMs) * time.Millisecond
+	step := time.Duration(b.StepDelayMs) * time.Millisecond
 	delay := func(s config.Step) time.Duration {
 		if s.Pause > 0 {
 			return time.Duration(s.Pause) * time.Millisecond
 		}
-		return def
+		return nav
 	}
 
 	var seq []samsung.Key
@@ -412,7 +426,7 @@ func (c *Controller) runBacklight(tv config.TV, target int) error {
 	if cur < 0 || cur > b.Max {
 		// Unknown value: go to zero first, then up.
 		for i := 0; i < b.Max; i++ {
-			seq = append(seq, samsung.Key{Key: "KEY_LEFT", Delay: def})
+			seq = append(seq, samsung.Key{Key: "KEY_LEFT", Delay: step})
 		}
 		cur = 0
 	}
@@ -421,7 +435,7 @@ func (c *Controller) runBacklight(tv config.TV, target int) error {
 		key, n = "KEY_LEFT", -n
 	}
 	for i := 0; i < n; i++ {
-		seq = append(seq, samsung.Key{Key: key, Delay: def})
+		seq = append(seq, samsung.Key{Key: key, Delay: step})
 	}
 	for _, k := range b.CloseKeys {
 		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
@@ -431,16 +445,19 @@ func (c *Controller) runBacklight(tv config.TV, target int) error {
 	return c.remote(tv).SendKeys(ctx, seq...)
 }
 
-// TestKeys sends a raw sequence with the default pause (calibration helper).
-func (c *Controller) TestKeys(mac string, keys []string) error {
+// TestKeys sends a raw sequence with the menu pause (calibration helper).
+func (c *Controller) TestKeys(mac string, keys []config.Step) error {
 	tv, err := c.tv(mac)
 	if err != nil {
 		return err
 	}
-	pause := time.Duration(tv.Backlight.PauseMs) * time.Millisecond
 	seq := make([]samsung.Key, len(keys))
 	for i, k := range keys {
-		seq[i] = samsung.Key{Key: k, Delay: pause}
+		pause := tv.Backlight.NavDelayMs
+		if k.Pause > 0 {
+			pause = k.Pause
+		}
+		seq[i] = samsung.Key{Key: k.Key, Delay: time.Duration(pause) * time.Millisecond}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -449,54 +466,68 @@ func (c *Controller) TestKeys(mac string, keys []string) error {
 
 // ---- backlight schedule ----------------------------------------------------
 
-// desiredBacklight returns the value of the schedule point that was the last
-// to pass today (local clock), or false when nothing is scheduled.
-func desiredBacklight(b config.Backlight, now time.Time) (int, bool) {
+// bootGrace: a TV that has just come online is still starting up and drops
+// menu keys, so the schedule waits this long after it appears.
+const bootGrace = 20 * time.Second
+
+// desiredBacklight returns the schedule point in effect at now: the last one
+// passed today, or — before the first point of the day — the last point of
+// yesterday. id identifies the point, so an edited value applies again.
+func desiredBacklight(b config.Backlight, now time.Time) (value int, id string, ok bool) {
 	mins := now.Hour()*60 + now.Minute()
-	best, bestAt := 0, -1
+	bestAt, lastAt := -1, -1
+	var best, last config.ScheduleItem
 	for _, it := range b.Schedule {
-		t, err := time.Parse("15:04", it.Time)
-		if err != nil {
+		at, valid := config.ParseClock(it.Time)
+		if !valid {
 			continue
 		}
-		if at := t.Hour()*60 + t.Minute(); at <= mins && at > bestAt {
-			best, bestAt = it.Value, at
+		if at <= mins && at > bestAt {
+			best, bestAt = it, at
+		}
+		if at > lastAt {
+			last, lastAt = it, at
 		}
 	}
-	return best, bestAt >= 0
+	if bestAt < 0 {
+		best, bestAt = last, lastAt
+	}
+	if bestAt < 0 {
+		return 0, "", false
+	}
+	return best.Value, fmt.Sprintf("%02d:%02d=%d", bestAt/60, bestAt%60, best.Value), true
 }
 
 // applyTimeBacklight switches the backlight by schedule. Runs from poll
-// (every 3 s); it only sends when the scheduled value changed. The value is
+// (every 3 s) and sends only when the point in effect changed. The value is
 // derived from the clock, so a TV that was off at the switch time picks the
-// latest passed point up as soon as it is online again — nothing to replay.
+// point up once it is online again; a manual change lasts until the next point.
 func (c *Controller) applyTimeBacklight(cfg config.Config) {
 	now := time.Now()
 	for _, tv := range cfg.TVs {
 		b := tv.Backlight
-		if !b.ByTime || len(b.Schedule) == 0 {
+		if !b.ByTime {
 			continue
 		}
-		want, ok := desiredBacklight(b, now)
+		want, id, ok := desiredBacklight(b, now)
 		if !ok {
 			continue
 		}
 		c.mu.Lock()
-		online := c.online[tv.MAC]
-		prev, applied := c.autoBL[tv.MAC]
+		ready := c.online[tv.MAC] && now.Sub(c.onSince[tv.MAC]) >= bootGrace && now.After(c.autoRetry[tv.MAC])
+		done := c.autoBL[tv.MAC] == id
+		if ready && !done {
+			c.autoBL[tv.MAC] = id
+		}
 		c.mu.Unlock()
-		if !online || applied && prev == want {
+		if !ready || done {
 			continue
 		}
-		if err := c.SetBacklight(tv.MAC, want, false); err != nil {
-			// Not recorded, so the next poll retries until the TV answers.
-			c.log.Warn("scheduled backlight failed", "tv", tv.Name, "value", want, "err", err)
-			continue
+		if b.Current == clamp(want, 0, b.Max) {
+			continue // already there (e.g. after an app restart)
 		}
-		c.mu.Lock()
-		c.autoBL[tv.MAC] = want
-		c.mu.Unlock()
-		c.log.Info("scheduled backlight", "tv", tv.Name, "value", want)
+		c.log.Info("scheduled backlight", "tv", tv.Name, "point", id)
+		c.SetBacklight(tv.MAC, want, false)
 	}
 }
 
