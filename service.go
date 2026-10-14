@@ -344,9 +344,20 @@ func (s *TvService) SaveTV(tv config.TV) error {
 	tv.Backlight.Sanitize()
 	err := s.store.UpdateTV(tv.MAC, func(t *config.TV) {
 		// The settings page holds a snapshot; keep fields the app maintains
-		// itself (pairing token, DHCP address, tracked volume).
+		// itself (pairing token, DHCP address, tracked volume and backlight).
 		tv.IP, tv.Secure, tv.Token, tv.Volume = t.IP, t.Secure, t.Token, t.Volume
+		tv.Backlight.Current = t.Backlight.Current
 		*t = tv
+	})
+	s.emitState()
+	return err
+}
+
+// SetBacklightCurrent records the value the TV shows now (the user typed it
+// in settings); nothing is sent to the TV.
+func (s *TvService) SetBacklightCurrent(mac string, v int) error {
+	err := s.store.UpdateTV(mac, func(t *config.TV) {
+		t.Backlight.Current = max(-1, min(v, t.Backlight.Max))
 	})
 	s.emitState()
 	return err

@@ -26,11 +26,10 @@ type Controller struct {
 	remotes   map[string]*samsung.Remote
 	online    map[string]bool
 	waking    map[string]context.CancelFunc
-	blTarget  map[string]int       // pending backlight target per TV
-	blRunning map[string]bool      // macro worker active per TV
-	onSince   map[string]time.Time // when the TV was last seen coming online
-	autoBL    map[string]string    // schedule point last applied per TV ("HH:MM=V")
-	autoRetry map[string]time.Time // no scheduled retry before this time
+	blTarget  map[string]int         // pending backlight target per TV
+	blRunning map[string]bool        // macro worker active per TV
+	onSince   map[string]time.Time   // when the TV was last seen coming online
+	sched     map[string]*schedState // backlight schedule progress per TV
 	offTimer  *time.Timer
 }
 
@@ -44,8 +43,7 @@ func New(store *config.Store, log *slog.Logger) *Controller {
 		blTarget:  map[string]int{},
 		blRunning: map[string]bool{},
 		onSince:   map[string]time.Time{},
-		autoBL:    map[string]string{},
-		autoRetry: map[string]time.Time{},
+		sched:     map[string]*schedState{},
 	}
 }
 
@@ -390,14 +388,20 @@ func (c *Controller) backlightWorker(mac string) {
 		}
 		if err := c.runBacklight(tv, target); err != nil {
 			c.log.Warn("backlight failed", "tv", tv.Name, "err", err)
-			// Let the schedule try again later instead of on every poll.
+			// A scheduled switch is retried a minute later, not on every poll.
 			c.mu.Lock()
-			delete(c.autoBL, mac)
-			c.autoRetry[mac] = time.Now().Add(time.Minute)
+			if st := c.sched[mac]; st != nil && st.running {
+				st.pending, st.retryAt = true, time.Now().Add(time.Minute)
+			}
 			c.mu.Unlock()
 			continue
 		}
 		c.store.UpdateTV(mac, func(t *config.TV) { t.Backlight.Current = target })
+		c.mu.Lock()
+		if st := c.sched[mac]; st != nil {
+			st.running = false
+		}
+		c.mu.Unlock()
 		c.changed()
 	}
 }
@@ -470,23 +474,32 @@ func (c *Controller) TestKeys(mac string, keys []config.Step) error {
 // menu keys, so the schedule waits this long after it appears.
 const bootGrace = 20 * time.Second
 
+// schedState follows the schedule of one TV.
+type schedState struct {
+	sig     string    // schedule as last seen; an edit only re-baselines
+	point   string    // time of the point in effect at the last poll
+	pending bool      // a switch is due but not yet sent
+	running bool      // the pending switch was handed to the macro worker
+	retryAt time.Time // no retry before this time
+}
+
 // desiredBacklight returns the schedule point in effect at now: the last one
 // passed today, or — before the first point of the day — the last point of
-// yesterday. id identifies the point, so an edited value applies again.
-func desiredBacklight(b config.Backlight, now time.Time) (value int, id string, ok bool) {
+// yesterday. at is the point's time ("HH:MM").
+func desiredBacklight(b config.Backlight, now time.Time) (value int, at string, ok bool) {
 	mins := now.Hour()*60 + now.Minute()
 	bestAt, lastAt := -1, -1
 	var best, last config.ScheduleItem
 	for _, it := range b.Schedule {
-		at, valid := config.ParseClock(it.Time)
+		m, valid := config.ParseClock(it.Time)
 		if !valid {
 			continue
 		}
-		if at <= mins && at > bestAt {
-			best, bestAt = it, at
+		if m <= mins && m > bestAt {
+			best, bestAt = it, m
 		}
-		if at > lastAt {
-			last, lastAt = it, at
+		if m > lastAt {
+			last, lastAt = it, m
 		}
 	}
 	if bestAt < 0 {
@@ -495,40 +508,58 @@ func desiredBacklight(b config.Backlight, now time.Time) (value int, id string, 
 	if bestAt < 0 {
 		return 0, "", false
 	}
-	return best.Value, fmt.Sprintf("%02d:%02d=%d", bestAt/60, bestAt%60, best.Value), true
+	return best.Value, fmt.Sprintf("%02d:%02d", bestAt/60, bestAt%60), true
 }
 
-// applyTimeBacklight switches the backlight by schedule. Runs from poll
-// (every 3 s) and sends only when the point in effect changed. The value is
-// derived from the clock, so a TV that was off at the switch time picks the
-// point up once it is online again; a manual change lasts until the next point.
+// applyTimeBacklight switches the backlight by schedule; runs from poll.
+// A switch happens only when the clock reaches the next point. If the TV was
+// off then, it is sent once the TV is up. Editing the schedule or turning it
+// on never sends anything by itself, and a manual change lasts until the
+// next point.
 func (c *Controller) applyTimeBacklight(cfg config.Config) {
-	now := time.Now()
+	for _, d := range c.scheduleDue(cfg, time.Now()) {
+		c.log.Info("scheduled backlight", "tv", d.name, "point", d.at, "value", d.value)
+		c.SetBacklight(d.mac, d.value, false)
+	}
+}
+
+type dueSwitch struct {
+	mac, name, at string
+	value         int
+}
+
+// scheduleDue advances the schedule state to now and returns the switches to send.
+func (c *Controller) scheduleDue(cfg config.Config, now time.Time) []dueSwitch {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []dueSwitch
 	for _, tv := range cfg.TVs {
 		b := tv.Backlight
-		if !b.ByTime {
+		want, at, ok := desiredBacklight(b, now)
+		sig := fmt.Sprint(b.Schedule)
+		st := c.sched[tv.MAC]
+		switch {
+		case !b.ByTime || !ok:
+			delete(c.sched, tv.MAC)
 			continue
+		case st == nil || st.sig != sig:
+			// New, edited or just enabled schedule: remember where we are,
+			// send nothing.
+			st = &schedState{sig: sig, point: at}
+			c.sched[tv.MAC] = st
+		case st.point != at:
+			st.point, st.pending, st.running = at, true, false
 		}
-		want, id, ok := desiredBacklight(b, now)
-		if !ok {
-			continue
+		if st.pending && !st.running && !now.Before(st.retryAt) &&
+			c.online[tv.MAC] && now.Sub(c.onSince[tv.MAC]) >= bootGrace {
+			st.pending = false
+			if b.Current != clamp(want, 0, b.Max) {
+				st.running = true
+				out = append(out, dueSwitch{tv.MAC, tv.Name, at, want})
+			}
 		}
-		c.mu.Lock()
-		ready := c.online[tv.MAC] && now.Sub(c.onSince[tv.MAC]) >= bootGrace && now.After(c.autoRetry[tv.MAC])
-		done := c.autoBL[tv.MAC] == id
-		if ready && !done {
-			c.autoBL[tv.MAC] = id
-		}
-		c.mu.Unlock()
-		if !ready || done {
-			continue
-		}
-		if b.Current == clamp(want, 0, b.Max) {
-			continue // already there (e.g. after an app restart)
-		}
-		c.log.Info("scheduled backlight", "tv", tv.Name, "point", id)
-		c.SetBacklight(tv.MAC, want, false)
 	}
+	return out
 }
 
 func clamp(v, lo, hi int) int {

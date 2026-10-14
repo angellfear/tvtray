@@ -82,7 +82,11 @@ function tvCard(t, online) {
     bind(el("input", { type: "checkbox" }), i => i.checked = get(), i => set(i.checked)), label);
 
   const b = t.backlight;
-  const blCurrent = number(() => b.current, v => b.current = v, -1, 100);
+  // The app tracks the current value itself (macros, schedule), so it is
+  // saved on its own and refreshed from "state" events — never via SaveTV.
+  const saveCurrent = debounce(v => safe(() => tv("SetBacklightCurrent", t.mac, v)), 300);
+  const blCurrent = el("input", { type: "number", min: -1, max: 100, value: b.current, "data-current": t.mac });
+  blCurrent.addEventListener("input", () => { b.current = num(blCurrent.value, b.current); saveCurrent(b.current); });
 
   const card = el("div", { class: "card" },
     el("div", { class: "tv-head" },
@@ -264,6 +268,13 @@ Events.On("state", ev => {
     const dot = card.querySelector(".dot");
     if (t && dot) dot.className = "dot" + (state.online[t.mac] ? " on" : "");
   });
+  for (const p of ev.data) {
+    const t = state.config.tvs.find(x => x.mac === p.mac);
+    if (!t) continue;
+    t.backlight.current = p.backlight;
+    const input = document.querySelector(`input[data-current="${p.mac}"]`);
+    if (input && document.activeElement !== input) input.value = p.backlight;
+  }
 });
 window.addEventListener("focus", () => { if (!document.activeElement || document.activeElement === document.body) safe(load); });
 safe(load);

@@ -46,3 +46,46 @@ func TestDesiredBacklightIgnoresBroken(t *testing.T) {
 		t.Error("broken-only schedule should not apply")
 	}
 }
+
+func TestScheduleDue(t *testing.T) {
+	c := New(nil, nil)
+	day := func(hh, mm int) time.Time { return time.Date(2026, 10, 14, hh, mm, 0, 0, time.Local) }
+	tv := &config.TV{MAC: "M", Name: "tv", Backlight: config.Backlight{
+		ByTime: true, Max: 20, Current: 15,
+		Schedule: []config.ScheduleItem{{Time: "08:00", Value: 15}, {Time: "22:00", Value: 4}},
+	}}
+	cfg := config.Config{TVs: []*config.TV{tv}}
+	c.online["M"], c.onSince["M"] = true, day(0, 0)
+
+	if d := c.scheduleDue(cfg, day(21, 0)); len(d) != 0 {
+		t.Fatalf("enabling the schedule must not send: %+v", d)
+	}
+	// Editing the schedule (a point now in effect) must not send either.
+	tv.Backlight.Schedule = append(tv.Backlight.Schedule, config.ScheduleItem{Time: "20:00", Value: 9})
+	if d := c.scheduleDue(cfg, day(21, 1)); len(d) != 0 {
+		t.Fatalf("an edit must not send: %+v", d)
+	}
+	// The clock reaches 22:00.
+	d := c.scheduleDue(cfg, day(22, 0))
+	if len(d) != 1 || d[0].value != 4 {
+		t.Fatalf("22:00: %+v", d)
+	}
+	if d := c.scheduleDue(cfg, day(22, 1)); len(d) != 0 {
+		t.Fatalf("sent twice: %+v", d)
+	}
+
+	// TV off at 08:00: the switch waits until it is up and has booted.
+	tv.Backlight.Current = 4
+	c.online["M"] = false
+	if d := c.scheduleDue(cfg, day(8, 0).AddDate(0, 0, 1)); len(d) != 0 {
+		t.Fatalf("sent to an offline TV: %+v", d)
+	}
+	on := day(9, 0).AddDate(0, 0, 1)
+	c.online["M"], c.onSince["M"] = true, on
+	if d := c.scheduleDue(cfg, on.Add(5*time.Second)); len(d) != 0 {
+		t.Fatalf("sent while booting: %+v", d)
+	}
+	if d := c.scheduleDue(cfg, on.Add(bootGrace)); len(d) != 1 || d[0].value != 15 {
+		t.Fatalf("catch-up: %+v", d)
+	}
+}

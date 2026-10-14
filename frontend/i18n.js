@@ -105,7 +105,7 @@ const D = {
   "bl.open": ["Кнопки «Открыть»", "“Open” keys", "„Öffnen“-Tasten"],
   "bl.close": ["Кнопки «Закрыть»", "“Close” keys", "„Schließen“-Tasten"],
   "bl.max": ["Максимум шкалы", "Scale maximum", "Skalenmaximum"],
-  "bl.navDelay": ["Пауза после пунктов меню, мс", "Pause after menu keys, ms", "Pause nach Menütasten, ms"],
+  "bl.navDelay": ["Пауза между нажатиями, мс", "Pause between presses, ms", "Pause zwischen Tasten, ms"],
   "bl.stepDelay": ["Пауза между ◀/▶, мс", "Pause between ◀/▶, ms", "Pause zwischen ◀/▶, ms"],
   "bl.pauseHelp": [
     "нажмите на клавишу в макросе, чтобы задать ей другую паузу",
