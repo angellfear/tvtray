@@ -89,3 +89,30 @@ func TestScheduleDue(t *testing.T) {
 		t.Fatalf("catch-up: %+v", d)
 	}
 }
+
+func TestBacklightAbsoluteSequence(t *testing.T) {
+	for _, current := range []int{-1, 0, 7, 20} {
+		b := config.DefaultBacklight()
+		b.Current = current
+		b.OpenKeys = []config.Step{{Key: "KEY_MENU", Pause: 1200}, {Key: "KEY_ENTER", Pause: 100}}
+		seq := backlightSequence(b, 7)
+		left, right := 0, 0
+		for _, k := range seq {
+			switch k.Key {
+			case "KEY_LEFT":
+				left++
+			case "KEY_RIGHT":
+				right++
+			}
+		}
+		if left != 23 || right != 7 {
+			t.Fatalf("current=%d: left=%d right=%d", current, left, right)
+		}
+		if seq[1].Delay != 1200*time.Millisecond || seq[2].Delay != 700*time.Millisecond {
+			t.Fatal("custom menu pause or slider settling pause lost")
+		}
+		if seq[3].Delay != 150*time.Millisecond || seq[len(seq)-1].Key != "KEY_EXIT" {
+			t.Fatal("step delay or closing key lost")
+		}
+	}
+}

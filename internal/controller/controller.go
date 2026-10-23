@@ -388,6 +388,7 @@ func (c *Controller) backlightWorker(mac string) {
 		}
 		if err := c.runBacklight(tv, target); err != nil {
 			c.log.Warn("backlight failed", "tv", tv.Name, "err", err)
+			c.store.UpdateTV(mac, func(t *config.TV) { t.Backlight.Current = -1 })
 			// A scheduled switch is retried a minute later, not on every poll.
 			c.mu.Lock()
 			if st := c.sched[mac]; st != nil && st.running {
@@ -407,7 +408,22 @@ func (c *Controller) backlightWorker(mac string) {
 }
 
 func (c *Controller) runBacklight(tv config.TV, target int) error {
-	b := tv.Backlight
+	seq := backlightSequence(tv.Backlight, target)
+	budget := time.Minute
+	for _, k := range seq {
+		budget += k.Delay
+	}
+	c.log.Info("backlight macro", "tv", tv.Name, "target", target,
+		"remembered", tv.Backlight.Current, "mode", "absolute", "keys", len(seq))
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	return c.remote(tv).SendKeys(ctx, seq...)
+}
+
+// backlightSequence always establishes zero before setting the target. The
+// remote API acknowledges delivery, not whether the TV actually moved its
+// slider, so Current is an estimate and must not be used as a starting point.
+func backlightSequence(b config.Backlight, target int) []samsung.Key {
 	nav := time.Duration(b.NavDelayMs) * time.Millisecond
 	step := time.Duration(b.StepDelayMs) * time.Millisecond
 	delay := func(s config.Step) time.Duration {
@@ -416,37 +432,29 @@ func (c *Controller) runBacklight(tv config.TV, target int) error {
 		}
 		return nav
 	}
-
 	var seq []samsung.Key
-	// Clean start: close whatever the previous (possibly broken) macro left
-	// on screen, so OpenKeys always begin from the same state.
 	for _, k := range b.CloseKeys {
 		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
 	}
 	for _, k := range b.OpenKeys {
 		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
 	}
-	cur := b.Current
-	if cur < 0 || cur > b.Max {
-		// Unknown value: go to zero first, then up.
-		for i := 0; i < b.Max; i++ {
-			seq = append(seq, samsung.Key{Key: "KEY_LEFT", Delay: step})
-		}
-		cur = 0
+	// The final menu animation can outlive the navigation key delay. Keep
+	// custom longer pauses, but let the slider settle before its first key.
+	if len(seq) > 0 {
+		seq[len(seq)-1].Delay = max(seq[len(seq)-1].Delay, 700*time.Millisecond)
 	}
-	key, n := "KEY_RIGHT", target-cur
-	if n < 0 {
-		key, n = "KEY_LEFT", -n
+	// A few extra presses tolerate missed input while reaching the lower stop.
+	for i := 0; i < b.Max+3; i++ {
+		seq = append(seq, samsung.Key{Key: "KEY_LEFT", Delay: step})
 	}
-	for i := 0; i < n; i++ {
-		seq = append(seq, samsung.Key{Key: key, Delay: step})
+	for i := 0; i < clamp(target, 0, b.Max); i++ {
+		seq = append(seq, samsung.Key{Key: "KEY_RIGHT", Delay: step})
 	}
 	for _, k := range b.CloseKeys {
 		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	return c.remote(tv).SendKeys(ctx, seq...)
+	return seq
 }
 
 // TestKeys sends a raw sequence with the menu pause (calibration helper).
