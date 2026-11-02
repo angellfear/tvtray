@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"tvtray/internal/config"
+	"tvtray/internal/samsung"
 )
 
 func TestDesiredBacklight(t *testing.T) {
@@ -90,29 +91,60 @@ func TestScheduleDue(t *testing.T) {
 	}
 }
 
-func TestBacklightAbsoluteSequence(t *testing.T) {
-	for _, current := range []int{-1, 0, 7, 20} {
-		b := config.DefaultBacklight()
-		b.Current = current
-		b.OpenKeys = []config.Step{{Key: "KEY_MENU", Pause: 1200}, {Key: "KEY_ENTER", Pause: 100}}
-		seq := backlightSequence(b, 7)
-		left, right := 0, 0
+func TestBacklightSequence(t *testing.T) {
+	b := config.DefaultBacklight() // Max 20, nav 700 ms, step 150 ms, close KEY_EXIT
+	b.OpenKeys = []config.Step{{Key: "KEY_MENU", Pause: 1200}, {Key: "KEY_ENTER", Pause: 100}}
+	counts := func(seq []samsung.Key) map[string]int {
+		m := map[string]int{}
 		for _, k := range seq {
-			switch k.Key {
-			case "KEY_LEFT":
-				left++
-			case "KEY_RIGHT":
-				right++
-			}
+			m[k.Key]++
 		}
-		if left != 23 || right != 7 {
-			t.Fatalf("current=%d: left=%d right=%d", current, left, right)
+		return m
+	}
+
+	for _, tc := range []struct {
+		current, target, left, right int
+	}{
+		{7, 10, 0, 3},  // known value: only the difference, up
+		{15, 4, 11, 0}, // ... and down
+		{7, 7, 0, 0},   // no slider work at all
+		{-1, 7, 20, 7}, // unknown: lower stop, then up
+		{25, 7, 20, 7}, // out of range: same as unknown
+	} {
+		b.Current = tc.current
+		seq := backlightSequence(b, tc.target)
+		got := counts(seq)
+		if got["KEY_LEFT"] != tc.left || got["KEY_RIGHT"] != tc.right {
+			t.Errorf("current=%d target=%d: left=%d right=%d, want %d/%d",
+				tc.current, tc.target, got["KEY_LEFT"], got["KEY_RIGHT"], tc.left, tc.right)
 		}
-		if seq[1].Delay != 1200*time.Millisecond || seq[2].Delay != 700*time.Millisecond {
-			t.Fatal("custom menu pause or slider settling pause lost")
+		if got["KEY_MENU"] != 1 || got["KEY_ENTER"] != 1 || got["KEY_EXIT"] != 2 {
+			t.Errorf("current=%d target=%d: open/close keys lost: %v", tc.current, tc.target, got)
 		}
-		if seq[3].Delay != 150*time.Millisecond || seq[len(seq)-1].Key != "KEY_EXIT" {
-			t.Fatal("step delay or closing key lost")
-		}
+	}
+
+	// Custom per-key pauses are kept; the last open key settles before the
+	// first slider key; slider keys use StepDelayMs; the macro closes.
+	b.Current = -1
+	seq := backlightSequence(b, 7)
+	// Layout: EXIT, MENU, ENTER, LEFT×20, RIGHT×7, EXIT.
+	if seq[0].Key != "KEY_EXIT" || seq[1].Delay != 1200*time.Millisecond {
+		t.Fatalf("leading close key or custom menu pause lost: %+v %+v", seq[0], seq[1])
+	}
+	if seq[2].Delay != 700*time.Millisecond {
+		t.Fatalf("settling pause not raised: %v", seq[2].Delay)
+	}
+	if seq[3].Delay != 150*time.Millisecond {
+		t.Fatalf("step delay lost: %v", seq[3].Delay)
+	}
+	if last := seq[len(seq)-1]; last.Key != "KEY_EXIT" {
+		t.Fatalf("closing key lost: %+v", last)
+	}
+
+	// A no-op change sends open/close only and keeps the custom pauses.
+	b.Current = 7
+	seq = backlightSequence(b, 7)
+	if len(seq) != 4 || seq[2].Delay != 100*time.Millisecond {
+		t.Fatalf("no-op change altered the sequence: %+v", seq)
 	}
 }

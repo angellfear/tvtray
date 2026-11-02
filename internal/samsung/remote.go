@@ -197,6 +197,11 @@ const maxDrops = 4
 // dropped key did land, so the connection is re-established and the sequence
 // resumes from that key.
 func (r *Remote) SendKeys(ctx context.Context, keys ...Key) error {
+	return r.SendKeysTrace(ctx, nil, keys...)
+}
+
+// SendKeysTrace reports successful writes before their configured pause.
+func (r *Remote) SendKeysTrace(ctx context.Context, sent func(int, Key), keys ...Key) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, drops := 0, 0; i < len(keys); {
@@ -210,6 +215,9 @@ func (r *Remote) SendKeys(ctx context.Context, keys ...Key) error {
 		err := r.conn.Write(wctx, websocket.MessageText, keyMessage(k.Key))
 		cancel()
 		if err == nil {
+			if sent != nil {
+				sent(i, k)
+			}
 			if k.Delay > 0 {
 				select {
 				case <-time.After(k.Delay):
