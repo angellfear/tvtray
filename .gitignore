@@ -2,3 +2,4 @@ build/
 *.syso
 TvTray.ini
 TvTray.log*
+.playwright-mcp/

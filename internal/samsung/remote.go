@@ -188,44 +188,53 @@ type Key struct {
 	Delay time.Duration
 }
 
-// SendKeys sends the sequence over one connection, retrying the connection
-// once if the cached socket turned out to be dead.
+// maxDrops bounds reconnects per sequence: a TV that accepts the handshake
+// but kills every write must not loop forever.
+const maxDrops = 4
+
+// SendKeys sends the sequence over one connection. 2016 TVs sometimes drop
+// the socket mid-sequence (e.g. when the menu opens); everything before the
+// dropped key did land, so the connection is re-established and the sequence
+// resumes from that key.
 func (r *Remote) SendKeys(ctx context.Context, keys ...Key) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for i, k := range keys {
-		if err := r.sendLocked(ctx, k.Key, i == 0); err != nil {
-			return err
-		}
-		if k.Delay > 0 {
-			select {
-			case <-time.After(k.Delay):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-	return nil
+	return r.SendKeysTrace(ctx, nil, keys...)
 }
 
-func (r *Remote) sendLocked(ctx context.Context, key string, allowRetry bool) error {
-	for attempt := 0; ; attempt++ {
+// SendKeysTrace reports successful writes before their configured pause.
+func (r *Remote) SendKeysTrace(ctx context.Context, sent func(int, Key), keys ...Key) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, drops := 0, 0; i < len(keys); {
+		k := keys[i]
 		if err := r.connectLocked(ctx); err != nil {
 			return err
 		}
 		// Own deadline: the caller's may have run out while the user was
 		// confirming the pairing prompt on the TV.
 		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		err := r.conn.Write(wctx, websocket.MessageText, keyMessage(key))
+		err := r.conn.Write(wctx, websocket.MessageText, keyMessage(k.Key))
 		cancel()
 		if err == nil {
-			return nil
+			if sent != nil {
+				sent(i, k)
+			}
+			if k.Delay > 0 {
+				select {
+				case <-time.After(k.Delay):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			i++
+			continue
 		}
 		r.closeLocked()
-		if !allowRetry || attempt > 0 {
-			return fmt.Errorf("send %s: %w", key, err)
+		drops++
+		if drops > maxDrops {
+			return fmt.Errorf("send %s: %w", k.Key, err)
 		}
 	}
+	return nil
 }
 
 // Press sends single keys with a short gap between them.

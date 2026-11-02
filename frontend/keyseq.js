@@ -1,4 +1,5 @@
-// Key-sequence editor: keys shown as removable chips, added from a mini remote.
+// Key-sequence editor: chips can be dragged to reorder and clicked to set a
+// per-key pause; new keys come from a mini remote.
 import { tv, el, safe } from "/common.js";
 import { t } from "/i18n.js";
 
@@ -17,6 +18,8 @@ const LAYOUT = [
   ["KEY_RETURN", "KEY_EXIT", "KEY_INFO"],
 ];
 
+const MAX_PAUSE = 120000;
+
 let openPopover = null;
 function closePopover() {
   openPopover?.remove();
@@ -27,27 +30,100 @@ document.addEventListener("pointerdown", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closePopover(); });
 
+function anchorPopover(pop, at) {
+  document.body.append(pop);
+  const r = at.getBoundingClientRect();
+  const top = r.bottom + window.scrollY + 4;
+  const left = Math.min(r.left + window.scrollX, document.documentElement.clientWidth - pop.offsetWidth - 8);
+  pop.style.top = top + "px";
+  pop.style.left = Math.max(8, left) + "px";
+  openPopover = pop;
+  pop.scrollIntoView({ block: "nearest" });
+}
+
 /**
- * keySeqField renders an editor for a list of remote keys.
- * @param {{mac: string, get: () => string[], set: (keys: string[]) => void}} o
+ * keySeqField renders an editor for a list of macro steps. A step is
+ * { key, pause } — pause in ms, 0 = use the default pause between presses.
+ * @param {{mac: string, get: () => Array<{key: string, pause?: number}>, set: (steps: any[]) => void}} o
  */
 export function keySeqField({ mac, get, set }) {
   const field = el("div", { class: "keyseq", tabindex: 0, title: t("ks.field") });
+  let dragIdx = -1;
 
-  const render = () => {
-    const keys = get();
-    field.replaceChildren(
-      ...keys.map((k, i) => el("span", { class: "chip", title: k },
-        keyLabel(k),
-        el("button", { class: "x", title: t("ks.remove"), onclick: e => {
-          e.stopPropagation();
-          set(keys.filter((_, j) => j !== i));
-          render();
-        } }, "×"))),
-      el("span", { class: "add" }, keys.length ? "+" : t("ks.add")));
+  // pausePopover edits the pause of one chip; the value replaces the default.
+  const pausePopover = (at, step, apply) => {
+    const input = el("input", {
+      type: "number", min: 0, max: MAX_PAUSE, step: 50,
+      value: step.pause || "", placeholder: t("ks.pauseHint"), style: "width: 100%",
+    });
+    const applyVal = () => {
+      apply(input.value === "" ? 0 : Math.min(MAX_PAUSE, Math.max(0, Math.trunc(+input.value) || 0)));
+      closePopover();
+    };
+    input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); applyVal(); } });
+    const pop = el("div", { class: "minirc" },
+      el("div", { class: "minirc-row" }, el("b", {}, keyLabel(step.key))),
+      el("div", { class: "small muted" }, t("ks.pause")),
+      el("div", { class: "minirc-row" }, input),
+      el("div", { class: "minirc-row" },
+        el("button", { title: t("ks.pauseHint"), onclick: () => { input.value = ""; applyVal(); } }, t("ks.reset")),
+        el("button", { class: "primary", onclick: applyVal }, t("ks.done"))));
+    pop.owner = at;
+    anchorPopover(pop, at);
+    input.focus();
   };
 
-  const append = k => { set([...get(), k]); render(); };
+  const render = () => {
+    const steps = get();
+    field.replaceChildren(
+      ...steps.map((s, i) => {
+        const chip = el("span", { class: "chip", title: s.key },
+          keyLabel(s.key),
+          s.pause ? el("span", { class: "pause" }, "⏱" + s.pause) : null,
+          el("button", { class: "x", title: t("ks.remove"), onclick: e => {
+            e.stopPropagation();
+            set(steps.filter((_, j) => j !== i));
+            render();
+          } }, "×"));
+        chip.draggable = true;
+        chip.addEventListener("dragstart", e => {
+          dragIdx = i;
+          e.dataTransfer.effectAllowed = "move";
+          chip.classList.add("dragging");
+        });
+        chip.addEventListener("dragend", () => chip.classList.remove("dragging"));
+        chip.addEventListener("dragover", e => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+        });
+        chip.addEventListener("drop", e => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (dragIdx < 0 || dragIdx === i) return;
+          const next = [...steps];
+          const [moved] = next.splice(dragIdx, 1);
+          next.splice(i, 0, moved);
+          dragIdx = -1;
+          set(next);
+          render();
+        });
+        chip.addEventListener("click", e => {
+          e.stopPropagation();
+          if (openPopover?.owner === chip) { closePopover(); return; }
+          closePopover();
+          pausePopover(chip, s, v => {
+            const next = [...steps];
+            next[i] = { key: s.key, pause: v };
+            set(next);
+            render();
+          });
+        });
+        return chip;
+      }),
+      el("span", { class: "add" }, steps.length ? "+" : t("ks.add")));
+  };
+
+  const append = k => { set([...get(), { key: k }]); render(); };
 
   field.addEventListener("click", () => {
     if (openPopover?.owner === field) return;
@@ -65,14 +141,7 @@ export function keySeqField({ mac, get, set }) {
         el("button", { onclick: () => { set([]); render(); } }, t("ks.clear")),
         el("button", { class: "primary", onclick: closePopover }, t("ks.done"))));
     pop.owner = field;
-    document.body.append(pop);
-    const r = field.getBoundingClientRect();
-    const top = r.bottom + window.scrollY + 4;
-    const left = Math.min(r.left + window.scrollX, document.documentElement.clientWidth - pop.offsetWidth - 8);
-    pop.style.top = top + "px";
-    pop.style.left = Math.max(8, left) + "px";
-    openPopover = pop;
-    pop.scrollIntoView({ block: "nearest" });
+    anchorPopover(pop, field);
   });
 
   field.addEventListener("keydown", e => {

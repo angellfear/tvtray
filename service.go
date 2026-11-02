@@ -266,9 +266,15 @@ func (s *TvService) presetList() []presets.Preset { return presets.Load(s.preset
 
 func applyPreset(tv *config.TV, p *presets.Preset) {
 	b := p.Backlight
+	steps := func(plain, withPauses []string) []config.Step {
+		if len(withPauses) > 0 {
+			plain = withPauses
+		}
+		return config.ParseSteps(strings.Join(plain, ","))
+	}
 	tv.Backlight.Enabled = true
-	tv.Backlight.OpenKeys = append([]string(nil), b.OpenKeys...)
-	tv.Backlight.CloseKeys = append([]string(nil), b.CloseKeys...)
+	tv.Backlight.OpenKeys = steps(b.OpenKeys, b.OpenSteps)
+	tv.Backlight.CloseKeys = steps(b.CloseKeys, b.CloseSteps)
 	tv.Backlight.Max = b.Max
 	if b.NavDelayMs > 0 {
 		tv.Backlight.NavDelayMs = b.NavDelayMs
@@ -331,17 +337,26 @@ func (s *TvService) RemoveTV(mac string) error {
 }
 
 func (s *TvService) SaveTV(tv config.TV) error {
-	if tv.Backlight.Max < 1 {
-		tv.Backlight.Max = 1
-	}
 	if tv.VolumeMode != config.VolumeKeys {
 		tv.VolumeMode = config.VolumeUPnP
 	}
+	tv.Backlight.Sanitize()
 	err := s.store.UpdateTV(tv.MAC, func(t *config.TV) {
 		// The settings page holds a snapshot; keep fields the app maintains
-		// itself (pairing token, DHCP address, tracked volume).
+		// itself (pairing token, DHCP address, tracked volume and backlight).
 		tv.IP, tv.Secure, tv.Token, tv.Volume = t.IP, t.Secure, t.Token, t.Volume
+		tv.Backlight.Current = t.Backlight.Current
 		*t = tv
+	})
+	s.emitState()
+	return err
+}
+
+// SetBacklightCurrent records the value the TV shows now (the user typed it
+// in settings); nothing is sent to the TV.
+func (s *TvService) SetBacklightCurrent(mac string, v int) error {
+	err := s.store.UpdateTV(mac, func(t *config.TV) {
+		t.Backlight.Current = max(-1, min(v, t.Backlight.Max))
 	})
 	s.emitState()
 	return err
@@ -406,11 +421,8 @@ func (s *TvService) applyAutostart(on bool) {
 
 // TestKeys sends a comma-separated key list (backlight calibration).
 func (s *TvService) TestKeys(mac, keys string) error {
-	var list []string
-	for _, k := range strings.FieldsFunc(keys, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
-		list = append(list, strings.ToUpper(k))
-	}
-	return s.ctrl.TestKeys(mac, list)
+	// "KEY_MENU,KEY_ENTER:1500" — the same format as the ini, per-key pauses included.
+	return s.ctrl.TestKeys(mac, config.ParseSteps(keys))
 }
 
 func (s *TvService) Uninstall() error {

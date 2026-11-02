@@ -24,8 +24,13 @@ const (
 )
 
 type Backlight struct {
-	OpenKeys    []string `json:"openKeys"`
-	CloseKeys   []string `json:"closeKeys"`
+	OpenKeys  []string `json:"openKeys"`
+	CloseKeys []string `json:"closeKeys"`
+	// OpenSteps/CloseSteps: the same keys with per-key pauses ("KEY_MENU:500").
+	// Used instead of OpenKeys/CloseKeys when set; versions before 1.3 read
+	// only the plain lists.
+	OpenSteps   []string `json:"openSteps,omitempty"`
+	CloseSteps  []string `json:"closeSteps,omitempty"`
 	Max         int      `json:"max"`
 	NavDelayMs  int      `json:"navDelayMs"`
 	StepDelayMs int      `json:"stepDelayMs"`

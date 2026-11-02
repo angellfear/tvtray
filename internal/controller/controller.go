@@ -4,6 +4,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,8 +26,10 @@ type Controller struct {
 	remotes   map[string]*samsung.Remote
 	online    map[string]bool
 	waking    map[string]context.CancelFunc
-	blTarget  map[string]int  // pending backlight target per TV
-	blRunning map[string]bool // macro worker active per TV
+	blTarget  map[string]int         // pending backlight target per TV
+	blRunning map[string]bool        // macro worker active per TV
+	onSince   map[string]time.Time   // when the TV was last seen coming online
+	sched     map[string]*schedState // backlight schedule progress per TV
 	offTimer  *time.Timer
 }
 
@@ -39,6 +42,8 @@ func New(store *config.Store, log *slog.Logger) *Controller {
 		waking:    map[string]context.CancelFunc{},
 		blTarget:  map[string]int{},
 		blRunning: map[string]bool{},
+		onSince:   map[string]time.Time{},
+		sched:     map[string]*schedState{},
 	}
 }
 
@@ -86,6 +91,9 @@ func (c *Controller) setOnline(mac string, on bool) {
 	c.mu.Lock()
 	prev, known := c.online[mac]
 	c.online[mac] = on
+	if on && (!known || !prev) {
+		c.onSince[mac] = time.Now()
+	}
 	c.mu.Unlock()
 	if !known || prev != on {
 		c.log.Info("tv state", "mac", mac, "online", on)
@@ -131,6 +139,7 @@ func (c *Controller) poll() {
 		}
 		c.setOnline(tv.MAC, on)
 	}
+	c.applyTimeBacklight(cfg)
 }
 
 // Refresh polls immediately (e.g. when the panel opens).
@@ -379,59 +388,207 @@ func (c *Controller) backlightWorker(mac string) {
 		}
 		if err := c.runBacklight(tv, target); err != nil {
 			c.log.Warn("backlight failed", "tv", tv.Name, "err", err)
+			c.store.UpdateTV(mac, func(t *config.TV) { t.Backlight.Current = -1 })
+			// A scheduled switch is retried a minute later, not on every poll.
+			c.mu.Lock()
+			if st := c.sched[mac]; st != nil && st.running {
+				st.pending, st.retryAt = true, time.Now().Add(time.Minute)
+			}
+			c.mu.Unlock()
 			continue
 		}
 		c.store.UpdateTV(mac, func(t *config.TV) { t.Backlight.Current = target })
+		c.mu.Lock()
+		if st := c.sched[mac]; st != nil {
+			st.running = false
+		}
+		c.mu.Unlock()
 		c.changed()
 	}
 }
 
 func (c *Controller) runBacklight(tv config.TV, target int) error {
-	b := tv.Backlight
+	seq := backlightSequence(tv.Backlight, target)
+	budget := time.Minute
+	for _, k := range seq {
+		budget += k.Delay
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	started := time.Now()
+	c.log.Info("backlight start", "tv", tv.Name, "remembered", tv.Backlight.Current,
+		"target", target, "keys", len(seq))
+	err := c.remote(tv).SendKeysTrace(ctx, func(i int, k samsung.Key) {
+		c.log.Info("backlight key", "tv", tv.Name, "index", i+1, "key", k.Key,
+			"pause_ms", k.Delay.Milliseconds(), "elapsed_ms", time.Since(started).Milliseconds())
+	}, seq...)
+	c.log.Info("backlight finish", "tv", tv.Name, "elapsed_ms", time.Since(started).Milliseconds(), "err", err)
+	return err
+}
+
+// backlightSequence steps the slider from the remembered Current to the
+// target. The remembered value is an estimate: the remote API acknowledges
+// delivery, not whether the TV actually moved its slider — a resync clears it,
+// and then the macro goes to the lower stop first, because from zero the next
+// send is always right.
+func backlightSequence(b config.Backlight, target int) []samsung.Key {
 	nav := time.Duration(b.NavDelayMs) * time.Millisecond
 	step := time.Duration(b.StepDelayMs) * time.Millisecond
+	delay := func(s config.Step) time.Duration {
+		if s.Pause > 0 {
+			return time.Duration(s.Pause) * time.Millisecond
+		}
+		return nav
+	}
 
 	var seq []samsung.Key
-	for _, k := range b.OpenKeys {
-		seq = append(seq, samsung.Key{Key: k, Delay: nav})
+	// Clean start: close whatever the previous (possibly broken) macro left
+	// on screen, so OpenKeys always begin from the same state.
+	for _, k := range b.CloseKeys {
+		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
 	}
+	for _, k := range b.OpenKeys {
+		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
+	}
+	var slider []samsung.Key
 	cur := b.Current
 	if cur < 0 || cur > b.Max {
 		// Unknown value: go to zero first, then up.
-		for i := 0; i < b.Max; i++ {
-			seq = append(seq, samsung.Key{Key: "KEY_LEFT", Delay: step})
-		}
 		cur = 0
+		for i := 0; i < b.Max; i++ {
+			slider = append(slider, samsung.Key{Key: "KEY_LEFT", Delay: step})
+		}
 	}
 	key, n := "KEY_RIGHT", target-cur
 	if n < 0 {
 		key, n = "KEY_LEFT", -n
 	}
 	for i := 0; i < n; i++ {
-		seq = append(seq, samsung.Key{Key: key, Delay: step})
+		slider = append(slider, samsung.Key{Key: key, Delay: step})
 	}
+	// The final menu animation can outlive the navigation key delay. Keep
+	// custom longer pauses, but let the slider settle before its first key.
+	if len(slider) > 0 && len(seq) > 0 {
+		seq[len(seq)-1].Delay = max(seq[len(seq)-1].Delay, 700*time.Millisecond)
+	}
+	seq = append(seq, slider...)
 	for _, k := range b.CloseKeys {
-		seq = append(seq, samsung.Key{Key: k, Delay: nav})
+		seq = append(seq, samsung.Key{Key: k.Key, Delay: delay(k)})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	return c.remote(tv).SendKeys(ctx, seq...)
+	return seq
 }
 
-// TestKeys sends a raw sequence with the TV's nav delay (calibration helper).
-func (c *Controller) TestKeys(mac string, keys []string) error {
+// TestKeys sends a raw sequence with the menu pause (calibration helper).
+func (c *Controller) TestKeys(mac string, keys []config.Step) error {
 	tv, err := c.tv(mac)
 	if err != nil {
 		return err
 	}
-	nav := time.Duration(tv.Backlight.NavDelayMs) * time.Millisecond
 	seq := make([]samsung.Key, len(keys))
 	for i, k := range keys {
-		seq[i] = samsung.Key{Key: k, Delay: nav}
+		pause := tv.Backlight.NavDelayMs
+		if k.Pause > 0 {
+			pause = k.Pause
+		}
+		seq[i] = samsung.Key{Key: k.Key, Delay: time.Duration(pause) * time.Millisecond}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return c.remote(tv).SendKeys(ctx, seq...)
+}
+
+// ---- backlight schedule ----------------------------------------------------
+
+// bootGrace: a TV that has just come online is still starting up and drops
+// menu keys, so the schedule waits this long after it appears.
+const bootGrace = 20 * time.Second
+
+// schedState follows the schedule of one TV.
+type schedState struct {
+	sig     string    // schedule as last seen; an edit only re-baselines
+	point   string    // time of the point in effect at the last poll
+	pending bool      // a switch is due but not yet sent
+	running bool      // the pending switch was handed to the macro worker
+	retryAt time.Time // no retry before this time
+}
+
+// desiredBacklight returns the schedule point in effect at now: the last one
+// passed today, or — before the first point of the day — the last point of
+// yesterday. at is the point's time ("HH:MM").
+func desiredBacklight(b config.Backlight, now time.Time) (value int, at string, ok bool) {
+	mins := now.Hour()*60 + now.Minute()
+	bestAt, lastAt := -1, -1
+	var best, last config.ScheduleItem
+	for _, it := range b.Schedule {
+		m, valid := config.ParseClock(it.Time)
+		if !valid {
+			continue
+		}
+		if m <= mins && m > bestAt {
+			best, bestAt = it, m
+		}
+		if m > lastAt {
+			last, lastAt = it, m
+		}
+	}
+	if bestAt < 0 {
+		best, bestAt = last, lastAt
+	}
+	if bestAt < 0 {
+		return 0, "", false
+	}
+	return best.Value, fmt.Sprintf("%02d:%02d", bestAt/60, bestAt%60), true
+}
+
+// applyTimeBacklight switches the backlight by schedule; runs from poll.
+// A switch happens only when the clock reaches the next point. If the TV was
+// off then, it is sent once the TV is up. Editing the schedule or turning it
+// on never sends anything by itself, and a manual change lasts until the
+// next point.
+func (c *Controller) applyTimeBacklight(cfg config.Config) {
+	for _, d := range c.scheduleDue(cfg, time.Now()) {
+		c.log.Info("scheduled backlight", "tv", d.name, "point", d.at, "value", d.value)
+		c.SetBacklight(d.mac, d.value, false)
+	}
+}
+
+type dueSwitch struct {
+	mac, name, at string
+	value         int
+}
+
+// scheduleDue advances the schedule state to now and returns the switches to send.
+func (c *Controller) scheduleDue(cfg config.Config, now time.Time) []dueSwitch {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []dueSwitch
+	for _, tv := range cfg.TVs {
+		b := tv.Backlight
+		want, at, ok := desiredBacklight(b, now)
+		sig := fmt.Sprint(b.Schedule)
+		st := c.sched[tv.MAC]
+		switch {
+		case !b.ByTime || !ok:
+			delete(c.sched, tv.MAC)
+			continue
+		case st == nil || st.sig != sig:
+			// New, edited or just enabled schedule: remember where we are,
+			// send nothing.
+			st = &schedState{sig: sig, point: at}
+			c.sched[tv.MAC] = st
+		case st.point != at:
+			st.point, st.pending, st.running = at, true, false
+		}
+		if st.pending && !st.running && !now.Before(st.retryAt) &&
+			c.online[tv.MAC] && now.Sub(c.onSince[tv.MAC]) >= bootGrace {
+			st.pending = false
+			if b.Current != clamp(want, 0, b.Max) {
+				st.running = true
+				out = append(out, dueSwitch{tv.MAC, tv.Name, at, want})
+			}
+		}
+	}
+	return out
 }
 
 func clamp(v, lo, hi int) int {
